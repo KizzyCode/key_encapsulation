@@ -1,0 +1,158 @@
+= Key Encapsulation v1
+:toc:
+
+
+== General
+This document defines a capsule format as well as a plugin-API for key encapsulation plugins.
+
+Key encapsulation is the process of encrypting an already existing key with another different key. This is especially
+useful if you want to use multiple different keys to open your data; e.g. an encrypted email with multiple recipients or
+an encrypted file system with multiple users.
+
+
+== Capsule Format
+The capsule format describes the format of a key capsule.
+
+The idea is to specify a well defined capsule format that can be decoded by any implementation but is flexible enough to
+store an arbitrary amount of plugin-specific data. Therefore we include a version field, a format UID that specifies
+which plugin can decode the capsule and a payload field for the plugin-specific data.
+
+
+=== Encoding
+The key-capsule uses the ASN.1-DER serialization, but in this document we use C++-like structs to describe the format.
+
+We use the following types and map them like this:
+
+ * A `struct` is serialized as an ASN.1-DER `SEQUENCE`
+ * A `uint8_t`, `uint64_t` etc. is serialized as an ASN.1-DER `INTEGER`
+ * A `char*` is serialized as an ASN.1-DER `UTF8String`
+ * A `uint8_t*` is serialized as an ASN.1-DER `OctetString`
+ * A `void*` indicates an unspecified type (similar to ASN.1-DER's `ANY`)
+
+If possible, your plugin *SHOULD* also use the ASN.1-DER encoding for everything in `plugin_payload` and limit itself to
+these 5 types. But if necessary, you can also use another ASN.1 type or wrap an arbitrary payload into an `uint8_t*`.
+
+
+=== Format
+A generic key capsule looks like this:
+[source,cpp]
+----
+typedef struct {
+    uint8_t version;
+    char* capsule_format_uid;
+    void* plugin_payload;
+} KeyCapsule;
+----
+
+An example of a real key capsule would look like this:
+[source,cpp]
+----
+typedef struct {
+    uint8_t version;            // -> 1
+    char* capsule_format_uid;   // -> "AesGcmV1.B593CCDE-B5C3-433A-ABBA-9087FBF13E60"
+    struct {
+        uint8_t* chachapoly_nonce;  // -> The AES-GCM nonce
+        uint8_t* sealed_key;        // -> The AES-GCM-sealed key
+    } plugin_payload;
+} KeyCapsule;
+----
+
+
+==== Fields
+ * `version`: The capsule-format version; always `1` for this specification
+ * `capsule_format_uid`: The payload format UID – this format-UID *MUST* map to one format only. To achieve this, we use
+    a randomized suffix for our UIDs; e.g. `AesGcmV1.B593CCDE-B5C3-433A-ABBA-9087FBF13E60`. You *MAY* reimplement a
+    format and use the same format UID if your plugin is *fully compatible* with the already existing format.
+ * `plugin_payload`: The payload that is passed to the plugin. This payload *MUST* be a valid ASN.1-DER field and
+   *SHOULD* be one of the four _specified_ types.
+
+
+== Plugin API
+To achive a simple and cross-platform compatible API, we use dynamic libraries that expose a C API/ABI. All functions
+*MUST* be threadsafe. An operation must not take longer than 90 seconds.
+
+
+=== API Overiew
+ - `char const* init()`: Initializes the library and returns it's API version. Before you do any further API-calls to
+   the library, you *MUST* call this function and validate the API version.
+ - `char const* capsule_format_uid()`: The <<Fields,`capsule_format_uid`>> of the format implemented by the library
+
+ - `size_t buf_max_len(char const* fn_name)`: The *maximum* length a buffer will need to store all data for produced
+   by `fn_name`
+
+ - `uint8_t capsule_key_ids(slice_t* buf)`: The capsule keys the plugin offers (useful if a plugin has it's own keystore
+   and supports multiple keys; e.g. GnuPG)
+ - `uint8_t seal_key(uint8_t* der_tag, slice_t* der_payload, slice_t const* key_to_seal, char const* capsule_key_id,
+   slice_t const* auth_info)`: Seals a key
+ - `uint8_t open_capsule(slice_t* key, uint8_t der_tag, slice_t const* der_payload, slice_t const* auth_info)`:
+   Opens a key-capsule
+
+
+=== Initialization
+To initialize the library and get the API version, load and call `char const* init()`.
+
+This function initializes the library on the current thread and returns a constant string that identifies the API. The
+API defined by this document is `de.KizzyCode.KeyCapsule.Api.v1`. If the function returns `NULL`, this means that a
+fatal error occurred during initialization.
+
+
+=== Capsule Format UID
+To get the payload format UID, load and call `char const* capsule_format_uid()`.
+
+This function returns a constant string that contains the payload format UID.
+
+
+=== Capsule Key IDs
+To get the capsule keys offered by the plugin, load and call `uint8_t capsule_key_ids(slice_t* key_ids)`.
+
+This function writes all key ID strings (including their trailing zero byte) into `key_ids` and adjusts `data_len`
+accordingly. The function may return an <<Error,error>>.
+
+
+=== Buffer Maximum Length
+To get the *maximum* length a buffer needs to store all data produced by a function, load and call
+`size_t buf_max_len(char const* fn_name)`.
+
+This function returns the maximum length of data produced by another function `fn_name` so that you can allocate a
+buffer accordingly.
+
+
+=== Seal Key
+To seal a key, load and call `uint8_t seal_key(uint8_t* der_tag, slice_t* der_payload, slice_t const* key_to_seal,
+char const* capsule_key_id, slice_t const* auth_info)`.
+
+This function seals a key using the `capsule_key` and writes the resulting DER-tag and -payload into `der_tag` and
+`der_payload`. The function may return an <<Error,error>>.
+
+
+=== Open Capsule
+To open a capsule, load and call `uint8_t open_capsule(slice_t* key, uint8_t der_tag, slice_t const* der_payload,
+slice_t const* auth_info)`.
+
+This function opens the DER-tag/-payload and writes the resulting key into `buf`. The function may return an
+<<Error,error>>.
+
+
+=== Slice Type
+The slice type is a type that represents a contiguous region of memory where `data` is pointing to the begin of the
+memory region and `data_len` announces it's size in bytes.
+
+[source,cpp]
+----
+typedef struct {
+    uint8_t* data;
+    size_t data_len;
+} slice_t;
+----
+
+
+=== Errors
+The following error codes are defined; however plugins *MAY* use another *undefined* error code within `[128, 255)`.
+
+ * `0`: ENONE – this return value indicates that no error occurred
+ * `1`: ENOBUFS – the provided buffer is too small
+ * `2`: EACCES – invalid/missing authentication
+ * `3`: EPERM – the operation is not permitted
+ * `4`: EIO – an I/O-related error occurred
+ * `5`: ECANCELED – the operation was canceled by either the caller or the plugin
+ * `6`: ETIMEDOUT – the operation timed out
