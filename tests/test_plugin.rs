@@ -28,7 +28,7 @@ fn create_pool() -> Pool {
 
 const CAPSULE_FORMAT_UID: &str = "TestCapsuleFormat.3A0351A7-FE90-4383-9E68-FCC20033D5F1";
 const KEY: &[u8] = b"2nwBK-EkfXW-yWSQv-Vkab3-USHvX-WNJxa-GeXFJ-ecsjJ-imnft";
-const CAPSULE: &[u8] = include_bytes!(capsule.bin);
+const CAPSULE: &[u8] = include_bytes!("capsule.bin");
 
 
 #[test]
