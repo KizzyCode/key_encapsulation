@@ -11,6 +11,12 @@ impl Pool {
 	pub fn new() -> Self {
 		Self{ plugins: HashMap::new() }
 	}
+	/// Creates a new plugin pool and loads the plugin at `path`
+	pub fn with_plugin(path: impl AsRef<Path>) -> Result<Self, Error> {
+		let mut pool = Pool::new();
+		pool.load(path)?;
+		Ok(pool)
+	}
 	/// Creates a new plugin pool and loads the plugins in `paths`
 	pub fn with_plugins<'a>(paths: impl Iterator<Item = &'a (impl AsRef<Path> + 'a)>)
 		-> Result<Self, Error>
@@ -19,6 +25,8 @@ impl Pool {
 		for path in paths { pool.load(path)?; }
 		Ok(pool)
 	}
+	
+	
 	/// Loads the plugin stored at `path` into the pool
 	pub fn load<T: AsRef<Path>>(&mut self, path: T) -> Result<&mut Self, Error> {
 		// Load plugin
@@ -39,9 +47,9 @@ impl Pool {
 	}
 	/// The available capsule keys for a capsule format (or rather the capsule key IDs offered by
 	/// the loaded plugin that implements this format)
-	pub fn capsule_keys(&self, capsule_format_uid: &ToString) -> Result<Vec<String>, Error> {
+	pub fn capsule_keys(&self, capsule_format_uid: impl ToString) -> Result<Vec<String>, Error> {
 		// Get plugin
-		let plugin = self.plugin(capsule_format_uid)?;
+		let plugin = self.plugin(&capsule_format_uid)?;
 		
 		// Allocate a buffer for the capsule key IDs and get them
 		let mut buf = vec![0u8; Self::buf_max_len(plugin, b"capsule_key_ids\0")];
@@ -60,9 +68,9 @@ impl Pool {
 	
 	
 	/// Predicts the *maximum* length for a key capsule
-	pub fn sealed_max_len(&self, capsule_format_uid: &ToString) -> Result<usize, Error> {
+	pub fn sealed_max_len(&self, capsule_format_uid: impl ToString) -> Result<usize, Error> {
 		let payload_max_len =
-			Self::buf_max_len(self.plugin(capsule_format_uid)?, b"seal_key\0");
+			Self::buf_max_len(self.plugin(&capsule_format_uid)?, b"seal_key\0");
 		Ok(Capsule::compute_serialized_len(capsule_format_uid, payload_max_len))
 	}
 	/// Seals `key`
@@ -73,11 +81,11 @@ impl Pool {
 	///    must be loaded)
 	///  - `capsule_key_id`: The ID of the capsule key to use
 	///  - `auth_info`: An authentication info (e.g. PIN/password etc.) passed to the plugin
-	pub fn seal<'a>(&self, key: &[u8], capsule_format_uid: &ToString,
+	pub fn seal<'a>(&self, key: &[u8], capsule_format_uid: impl ToString,
 		capsule_key_id: impl AsRef<str>, auth_info: &[u8]) -> Result<Capsule, Error>
 	{
 		// Load the corresponding plugin and create a buffer
-		let plugin = self.plugin(capsule_format_uid)?;
+		let plugin = self.plugin(&capsule_format_uid)?;
 		let mut tag = 0u8;
 		let mut payload = vec![0u8; Self::buf_max_len(plugin, b"seal_key\0")];
 		
@@ -104,8 +112,8 @@ impl Pool {
 	
 	
 	/// Predicts the *maximum* length for an opened key
-	pub fn opened_max_len(&self, capsule_format_uid: &ToString) -> Result<usize, Error>	{
-		Ok(Self::buf_max_len(self.plugin(capsule_format_uid)?, b"open_capsule\0"))
+	pub fn opened_max_len(&self, capsule_format_uid: impl ToString) -> Result<usize, Error>	{
+		Ok(Self::buf_max_len(self.plugin(&capsule_format_uid)?, b"open_capsule\0"))
 	}
 	/// Opens `capsule`
 	///
@@ -132,8 +140,7 @@ impl Pool {
 	
 	/// Gets a reference to a loaded plugin or returns an `KeyEncapsulationError::ApiMisuse` error
 	fn plugin(&self, capsule_format_uid: &ToString) -> Result<&Plugin, Error> {
-		self.plugins.get(&capsule_format_uid.to_string())
-			.ok_or(Error::ApiMisuse)
+		self.plugins.get(&capsule_format_uid.to_string()).ok_or(Error::ApiMisuse)
 	}
 	/// The *maximum* length a buffer will need to store all data for produced by `fn_name`
 	fn buf_max_len(plugin: &Plugin, fn_name: &[u8]) -> usize {

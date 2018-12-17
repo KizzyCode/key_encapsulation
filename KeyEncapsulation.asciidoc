@@ -77,12 +77,12 @@ To achive a simple and cross-platform compatible API, we use dynamic libraries t
    the library, you *MUST* call this function and validate the API version.
  - `char const* capsule_format_uid()`: The <<Fields,`capsule_format_uid`>> of the format implemented by the library
 
- - `size_t buf_max_len(char const* fn_name)`: The *maximum* length a buffer will need to store all data for produced
+ - `size_t buf_len_max(char const* fn_name)`: The *maximum* length a buffer will need to store all data for produced
    by `fn_name`
 
  - `uint8_t capsule_key_ids(slice_t* buf)`: The capsule keys the plugin offers (useful if a plugin has it's own keystore
    and supports multiple keys; e.g. GnuPG)
- - `uint8_t seal_key(uint8_t* der_tag, slice_t* der_payload, slice_t const* key_to_seal, char const* capsule_key_id,
+ - `uint8_t seal_key(uint8_t* der_tag, slice_t* der_payload, slice_t const* key, char const* capsule_key_id,
    slice_t const* auth_info)`: Seals a key
  - `uint8_t open_capsule(slice_t* key, uint8_t der_tag, slice_t const* der_payload, slice_t const* auth_info)`:
    Opens a key-capsule
@@ -111,7 +111,7 @@ accordingly. The function may return an <<Error,error>>.
 
 === Buffer Maximum Length
 To get the *maximum* length a buffer needs to store all data produced by a function, load and call
-`size_t buf_max_len(char const* fn_name)`.
+`size_t buf_len_max(char const* fn_name)`.
 
 This function returns the maximum length of data produced by another function `fn_name` so that you can allocate a
 buffer accordingly.
@@ -150,9 +150,12 @@ typedef struct {
 The following error codes are defined; however plugins *MAY* use another *undefined* error code within `[128, 255)`.
 
  * `0`: ENONE – this return value indicates that no error occurred
- * `1`: ENOBUFS – the provided buffer is too small
+ * `1`: EINIT – the library could not be initialized
  * `2`: EACCES – invalid/missing authentication
  * `3`: EPERM – the operation is not permitted
  * `4`: EIO – an I/O-related error occurred
- * `5`: ECANCELED – the operation was canceled by either the caller or the plugin
- * `6`: ETIMEDOUT – the operation timed out
+ * `5`: EILSEQ – invalid data in capsule payload
+ * `6`: ENOKEY – no valid key to decrypt the data
+ * `7`: ECANCELED – the operation was canceled by either the caller or the plugin
+ * `8`: ETIMEDOUT – the operation timed out
+ * `9`: EINVAL – an API-misuse occurred

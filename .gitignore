@@ -7,3 +7,4 @@
 # Ignore build results
 Cargo.lock
 target/
+test_plugin/target

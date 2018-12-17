@@ -4,9 +4,9 @@
 
 /// Checks if `$condition` evaluates to `true` and returns `$error` if this is not the case
 macro_rules! check {
-    ($condition:expr, $error:expr) => (if !$condition {
-    	return Err(::std::convert::From::from($error))
-    });
+	($condition:expr, $error:expr) => (if !$condition {
+		return Err(::std::convert::From::from($error))
+	});
 }
 // Import `asn1_der` explicitly to support the derive macro
 #[macro_use] extern crate asn1_der;
@@ -28,18 +28,22 @@ pub use self::{ capsule::Capsule, pool::Pool };
 pub enum PluginError {
 	/// The library could not be initialized
 	InitializationError,
-	/// The provided buffer is too small
-	BufferIsTooSmall,
 	/// An authentication error occurred (e.g. bad PIN, password etc.)
 	AuthenticationError,
 	/// The operation is not allowed
 	OperationNotAllowed,
 	/// An plugin internal I/O-error occurred
 	IoError,
+	/// Invalid data in plugin payload
+	InvalidData,
+	/// There is no valid key available to decrypt the data
+	NoValidKey,
 	/// The operation was canceled by the user
 	OperationCanceled,
 	/// The operation timed out (e.g. took longer than 90s)
 	OperationTimedOut,
+	/// A plugin-related API error
+	ApiMisuse,
 	/// Another (plugin specific) error occurred
 	Other(u8)
 }
@@ -48,12 +52,15 @@ impl PluginError {
 	pub fn check_errno(errno: u8) -> Result<(), Self> {
 		match errno {
 			0 => Ok(()),
-			1 => Err(PluginError::BufferIsTooSmall),
+			1 => Err(PluginError::InitializationError),
 			2 => Err(PluginError::AuthenticationError),
 			3 => Err(PluginError::OperationNotAllowed),
 			4 => Err(PluginError::IoError),
-			5 => Err(PluginError::OperationCanceled),
-			6 => Err(PluginError::OperationTimedOut),
+			5 => Err(PluginError::InvalidData),
+			6 => Err(PluginError::NoValidKey),
+			7 => Err(PluginError::OperationCanceled),
+			8 => Err(PluginError::OperationTimedOut),
+			9 => Err(PluginError::ApiMisuse),
 			other => Err(PluginError::Other(other))
 		}
 	}

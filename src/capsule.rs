@@ -14,7 +14,7 @@ pub struct Capsule {
 }
 impl Capsule {
 	/// Creates a new v1 key capsule with `capsule_format_uid` and `plugin_payload`
-	pub(in crate) fn new(capsule_format_uid: &ToString, plugin_payload: DerObject) -> Self {
+	pub(in crate) fn new(capsule_format_uid: impl ToString, plugin_payload: DerObject) -> Self {
 		Self{ version: 1, capsule_format_uid: capsule_format_uid.to_string(), plugin_payload }
 	}
 	/// Parses a v1 key capsule from `data`
@@ -46,7 +46,7 @@ impl Capsule {
 	
 	
 	/// Computes the serialized length of the entire capsule for a plugin's DER-*payload* length
-	pub(in crate) fn compute_serialized_len(capsule_format_uid: &ToString,
+	pub(in crate) fn compute_serialized_len(capsule_format_uid: impl ToString,
 		plugin_payload_len: usize) -> usize
 	{
 		let sequence_payload_len = 1u128.serialized_len()
