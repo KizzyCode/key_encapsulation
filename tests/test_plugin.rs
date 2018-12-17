@@ -15,9 +15,9 @@ fn create_pool() -> Pool {
 	
 	// Append plugin name
 	match true {
-		_ if cfg!(target_os = "windows") => path.push("libtest_plugin.dll"),
+		_ if cfg!(target_os = "windows") => path.push("test_plugin.dll"),
 		_ if cfg!(target_os = "macos") => path.push("libtest_plugin.dylib"),
-		_ if cfg!(target_os = "unix") => path.push("libtest_plugin.so"),
+		_ if cfg!(target_family = "unix") => path.push("libtest_plugin.so"),
 		_ => unimplemented!("Your current platform has no test yet")
 	};
 	
@@ -28,7 +28,7 @@ fn create_pool() -> Pool {
 
 const CAPSULE_FORMAT_UID: &str = "TestCapsuleFormat.3A0351A7-FE90-4383-9E68-FCC20033D5F1";
 const KEY: &[u8] = b"2nwBK-EkfXW-yWSQv-Vkab3-USHvX-WNJxa-GeXFJ-ecsjJ-imnft";
-const CAPSULE: &[u8] = include_bytes!("capsule");
+const CAPSULE: &[u8] = include_bytes!(capsule.bin);
 
 
 #[test]
@@ -39,7 +39,7 @@ fn test() {
 	// Test format UID
 	assert_eq!(pool.capsule_format_uids(), vec![CAPSULE_FORMAT_UID.to_string()]);
 	
-	// Test capsule key IDs
+	// Test capsule.bin key IDs
 	assert_eq!(
 		pool.capsule_keys(CAPSULE_FORMAT_UID).unwrap(),
 		vec!["Key0".to_string(), "Key1".to_string(), "Key7".to_string()]
