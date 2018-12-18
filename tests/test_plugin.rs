@@ -1,4 +1,4 @@
-use key_encapsulation::{ Capsule, Pool };
+use key_encapsulation::{ Error, PluginError, Capsule, Pool };
 use ::std::path::PathBuf;
 
 
@@ -66,4 +66,79 @@ fn test() {
 	let key_len = pool.open(&mut key_buf, &capsule, b"Key0").unwrap();
 	
 	assert_eq!(&key_buf[..key_len], KEY);
+}
+
+
+#[test]
+fn test_invalid_capsule_format_uids() {
+	// Load pool
+	let pool = create_pool();
+	
+	// Test invalid capsule format UIDs
+	assert_eq!(pool.capsule_keys("Invalid .)"), Err(Error::ApiMisuse));
+	assert_eq!(pool.sealed_max_len("Invalid .)"), Err(Error::ApiMisuse));
+	assert_eq!(pool.opened_max_len("Invalid .)"), Err(Error::ApiMisuse));
+	
+	assert_eq!(
+		pool.seal(KEY, ".)", "", b""),
+		Err(Error::ApiMisuse)
+	);
+}
+
+
+#[test]
+fn test_invalid_key_ids() {
+	// Load pool
+	let pool = create_pool();
+	
+	// Sealing
+	assert_eq!(
+		pool.seal(KEY, CAPSULE_FORMAT_UID, ".)", b""),
+		Err(Error::PluginError(PluginError::ApiMisuse))
+	);
+	
+	// Opening
+	let mut data = CAPSULE.to_vec();
+	data[66] = b'4'; // Modify "Key0" to "Key4"
+	
+	let capsule = Capsule::parse(data.iter()).unwrap();
+	assert_eq!(
+		pool.open(&mut[], &capsule, b""),
+		Err(Error::PluginError(PluginError::NoValidKey))
+	);
+}
+
+#[test]
+fn test_auth_errors() {
+	// Load pool
+	let pool = create_pool();
+	
+	// Sealing
+	assert_eq!(
+		pool.seal(KEY, CAPSULE_FORMAT_UID, "Key0", b""),
+		Err(Error::PluginError(PluginError::AuthenticationError))
+	);
+	
+	// Opening
+	let capsule = Capsule::parse(CAPSULE.iter()).unwrap();
+	assert_eq!(
+		pool.open(&mut[], &capsule, b"Key1"),
+		Err(Error::PluginError(PluginError::AuthenticationError))
+	);
+}
+
+#[test]
+fn test_invalid_capsule() {
+	// Load pool
+	let pool = create_pool();
+	
+	// Opening
+	let mut data = CAPSULE.to_vec();
+	data[67] = b';'; // Modify ":" to ";"
+	
+	let capsule = Capsule::parse(data.iter()).unwrap();
+	assert_eq!(
+		pool.open(&mut[], &capsule, b"Key0"),
+		Err(Error::PluginError(PluginError::InvalidData))
+	);
 }
