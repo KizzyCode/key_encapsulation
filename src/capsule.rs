@@ -6,7 +6,7 @@ use ::{
 
 
 /// A key capsule
-#[derive(Asn1Der)]
+#[derive(Clone, Debug, Eq, PartialEq, Asn1Der)]
 pub struct Capsule {
 	version: u128,
 	pub(in crate) capsule_format_uid: String,
