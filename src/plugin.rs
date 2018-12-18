@@ -1,4 +1,4 @@
-use crate::{Error, PluginError };
+use crate::{ Error, PluginError };
 use ::{
 	libloading::Library,
 	std::{ path::Path, marker::PhantomData, os::raw::c_char, ffi::CStr }
@@ -53,10 +53,19 @@ pub struct Plugin {
 impl Plugin {
 	/// Load the library
 	pub fn load(path: impl AsRef<Path>) -> Result<Self, Error> {
-		// Load and initialize library
+		// Load library
+		#[cfg(target_os = "linux")]
+		let library: Library = {
+			// Load library with RTLD_NOW | RTLD_NODELETE to fix a SIGSEGV
+			// (see https://github.com/nagisa/rust_libloading/issues/41)
+			::libloading::os::unix::Library::open(Some(path.as_ref()), 0x2 | 0x1000)?.into()
+		};
+		#[cfg(not(target_os = "linux"))]
 		let library = Library::new(path.as_ref())?;
+		
+		// Validate loaded library
 		unsafe {
-			// Initialize library and get API version
+			// Initialize library and check the API version
 			let api_version: *const c_char =
 				library.get::<unsafe extern fn() -> *const c_char>(b"init\0")?();
 			
@@ -68,6 +77,7 @@ impl Plugin {
 			);
 		}
 		
+		// Create plugin
 		Ok(Self {
 			capsule_format_uid: *unsafe{ library.get(b"capsule_format_uid\0")? },
 			buf_len_max: *unsafe{ library.get(b"buf_len_max\0")? },
