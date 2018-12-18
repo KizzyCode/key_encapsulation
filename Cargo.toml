@@ -1,5 +1,5 @@
 [package]
-name = "key_encapsulation"
+name = "kync"
 version = "0.1.0"
 authors = ["KizzyCode <development@kizzycode.de>"]
 edition = "2018"

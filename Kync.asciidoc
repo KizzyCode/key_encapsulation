@@ -1,9 +1,9 @@
-= Key Encapsulation v1
+= Kync v1
 :toc:
 
 
 == General
-This document defines a capsule format as well as a plugin-API for key encapsulation plugins.
+Kync describes a **K**e**Y**e**NC**apsulation format as well as a plugin-API for key encapsulation plugins.
 
 Key encapsulation is the process of encrypting an already existing key with another different key. This is especially
 useful if you want to use multiple different keys to open your data; e.g. an encrypted email with multiple recipients or

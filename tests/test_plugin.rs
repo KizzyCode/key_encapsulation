@@ -1,4 +1,4 @@
-use key_encapsulation::{ Error, PluginError, Capsule, Pool };
+use kync::{ Error, PluginError, Capsule, Pool };
 use ::std::path::PathBuf;
 
 

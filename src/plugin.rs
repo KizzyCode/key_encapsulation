@@ -33,7 +33,7 @@ impl<'a> CSliceMut<'a> {
 }
 
 
-/// A key capsule plugin (see "KeyEncapsulation.asciidoc" for further API documentation)
+/// A key capsule plugin (see "Kync.asciidoc" for further API documentation)
 pub struct Plugin {
 	pub capsule_format_uid: unsafe extern fn() -> *const c_char,
 	pub buf_len_max: unsafe extern fn(fn_name: *const c_char) -> usize,

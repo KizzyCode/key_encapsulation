@@ -1,5 +1,4 @@
-//! This crate is an implementation of the KeyEncapsulation specification (see
-//! "KeyEncapsulation.asciidoc")
+//! This crate is an implementation of the Kync specification (see "Kync.asciidoc")
 
 
 /// Checks if `$condition` evaluates to `true` and returns `$error` if this is not the case
