@@ -3,7 +3,7 @@ use ::std::{ ffi::CStr, os::raw::c_char };
 
 
 #[no_mangle] pub extern "C" fn init() -> *const c_char {
-	b"de.KizzyCode.KeyCapsule.Api.v1\0".as_ptr() as _
+	b"de.KizzyCode.Kync.ApiV1\0".as_ptr() as _
 }
 #[no_mangle] pub extern "C" fn capsule_format_uid() -> *const c_char {
 	b"TestCapsuleFormat.3A0351A7-FE90-4383-9E68-FCC20033D5F1\0".as_ptr() as _

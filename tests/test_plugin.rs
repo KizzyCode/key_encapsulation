@@ -46,7 +46,7 @@ fn test() {
 	);
 	
 	// Sealed and opened max length
-	assert_eq!(pool.sealed_max_len(CAPSULE_FORMAT_UID).unwrap(), 1091);
+	assert_eq!(pool.sealed_max_len(CAPSULE_FORMAT_UID).unwrap(), 1117);
 	assert_eq!(pool.opened_max_len(CAPSULE_FORMAT_UID).unwrap(), 1024);
 	
 	
@@ -99,7 +99,7 @@ fn test_invalid_key_ids() {
 	
 	// Opening
 	let mut data = CAPSULE.to_vec();
-	data[66] = b'4'; // Modify "Key0" to "Key4"
+	data[93] = b'4'; // Modify "Key0" to "Key4"
 	
 	let capsule = Capsule::parse(data.iter()).unwrap();
 	assert_eq!(
@@ -134,7 +134,7 @@ fn test_invalid_capsule() {
 	
 	// Opening
 	let mut data = CAPSULE.to_vec();
-	data[67] = b';'; // Modify ":" to ";"
+	data[94] = b';'; // Modify ":" to ";"
 	
 	let capsule = Capsule::parse(data.iter()).unwrap();
 	assert_eq!(

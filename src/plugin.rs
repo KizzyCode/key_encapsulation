@@ -72,7 +72,7 @@ impl Plugin {
 			// Check for NULL-ptr and validate API version
 			check!(!api_version.is_null(), PluginError::InitializationError);
 			check!(
-				CStr::from_ptr(api_version).to_string_lossy() == "de.KizzyCode.KeyCapsule.Api.v1",
+				CStr::from_ptr(api_version).to_string_lossy() == "de.KizzyCode.Kync.ApiV1",
 				Error::Unsupported
 			);
 		}

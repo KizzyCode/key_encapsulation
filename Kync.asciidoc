@@ -38,7 +38,7 @@ A generic key capsule looks like this:
 [source,cpp]
 ----
 typedef struct {
-    uint8_t version;
+    char* version;
     char* capsule_format_uid;
     void* plugin_payload;
 } KeyCapsule;
@@ -48,7 +48,7 @@ An example of a real key capsule would look like this:
 [source,cpp]
 ----
 typedef struct {
-    uint8_t version;            // -> 1
+    char* version;           	// -> "de.KizzyCode.Kync.CapsuleV1"
     char* capsule_format_uid;   // -> "AesGcmV1.B593CCDE-B5C3-433A-ABBA-9087FBF13E60"
     struct {
         uint8_t* chachapoly_nonce;  // -> The AES-GCM nonce
@@ -59,7 +59,7 @@ typedef struct {
 
 
 ==== Fields
- * `version`: The capsule-format version; always `1` for this specification
+ * `version`: The capsule-format version; always `de.KizzyCode.Kync.CapsuleV1` for this specification
  * `capsule_format_uid`: The payload format UID – this format-UID *MUST* map to one format only. To achieve this, we use
     a randomized suffix for our UIDs; e.g. `AesGcmV1.B593CCDE-B5C3-433A-ABBA-9087FBF13E60`. You *MAY* reimplement a
     format and use the same format UID if your plugin is *fully compatible* with the already existing format.
