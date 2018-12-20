@@ -69,7 +69,7 @@ typedef struct {
 
 == Plugin API
 To achive a simple and cross-platform compatible API, we use dynamic libraries that expose a C API/ABI. All functions
-*MUST* be threadsafe. An operation must not take longer than 90 seconds.
+*MUST* be threadsafe. An operation *MUST NOT* take longer than 90 seconds.
 
 
 === API Overiew
