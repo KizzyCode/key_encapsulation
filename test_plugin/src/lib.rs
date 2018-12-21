@@ -31,7 +31,7 @@ pub enum Error {
 	Other(u8)
 }
 impl Error {
-	/// Checks `errno` and returns either nothing or the corresponding `PluginError`
+	/// Converts the `PluginError` to the corresponding `errno`
 	pub fn to_errno(self) -> u8 {
 		match self {
 			Error::InitializationError => 1,
