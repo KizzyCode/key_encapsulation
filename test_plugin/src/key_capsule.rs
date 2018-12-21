@@ -2,7 +2,7 @@ use crate::{ Error, ffi_tools::{ CheckedDeref, CheckedDerefMut, CSlice, CSliceMu
 use ::std::{ ffi::CStr, os::raw::c_char };
 
 
-#[no_mangle] pub extern "C" fn init() -> *const c_char {
+#[no_mangle] pub extern "C" fn init(_log_level: u8) -> *const c_char {
 	b"de.KizzyCode.Kync.ApiV1\0".as_ptr() as _
 }
 #[no_mangle] pub extern "C" fn capsule_format_uid() -> *const c_char {

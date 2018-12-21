@@ -73,8 +73,8 @@ To achive a simple and cross-platform compatible API, we use dynamic libraries t
 
 
 === API Overiew
- - `char const* init()`: Initializes the library and returns it's API version. Before you do any further API-calls to
-   the library, you *MUST* call this function and validate the API version.
+ - `char const* init(uint8_t log_level)`: Initializes the library and returns it's API version. Before you do any
+   further API-calls to the library, you *MUST* call this function and validate the API version.
  - `char const* capsule_format_uid()`: The <<Fields,`capsule_format_uid`>> of the format implemented by the library
 
  - `size_t buf_len_max(char const* fn_name)`: The *maximum* length a buffer will need to store all data for produced
@@ -89,11 +89,11 @@ To achive a simple and cross-platform compatible API, we use dynamic libraries t
 
 
 === Initialization
-To initialize the library and get the API version, load and call `char const* init()`.
+To initialize the library and get the API version, load and call `char const* init(uint8_t log_level)`.
 
-This function initializes the library on the current thread and returns a constant string that identifies the API. The
-API defined by this document is `de.KizzyCode.KeyCapsule.Api.v1`. If the function returns `NULL`, this means that a
-fatal error occurred during initialization.
+This function initializes the library on the current thread with a given log-level (`0` means no logging to StdErr) and
+returns a constant string that identifies the API. The API defined by this document is `de.KizzyCode.KeyCapsule.Api.v1`.
+If the function returns `NULL`, this means that a fatal error occurred during initialization.
 
 
 === Capsule Format UID

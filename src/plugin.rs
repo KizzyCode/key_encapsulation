@@ -53,6 +53,12 @@ pub struct Plugin {
 impl Plugin {
 	/// Load the library
 	pub fn load(path: impl AsRef<Path>) -> Result<Self, Error> {
+		// Determine the log-level
+		let log_level = match cfg!(debug_assertions) {
+			true => 1u8,
+			false => 0u8
+		};
+		
 		// Load library
 		#[cfg(target_os = "linux")]
 		let library: Library = {
@@ -66,8 +72,9 @@ impl Plugin {
 		// Validate loaded library
 		unsafe {
 			// Initialize library and check the API version
-			let api_version: *const c_char =
-				library.get::<unsafe extern fn() -> *const c_char>(b"init\0")?();
+			let init =
+				library.get::<unsafe extern fn(u8) -> *const c_char>(b"init\0")?;
+			let api_version: *const c_char = init(log_level);
 			
 			// Check for NULL-ptr and validate API version
 			check!(!api_version.is_null(), PluginError::InitializationError);
