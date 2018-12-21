@@ -34,16 +34,16 @@ impl Error {
 	/// Checks `errno` and returns either nothing or the corresponding `PluginError`
 	pub fn to_errno(self) -> u8 {
 		match self {
-			Error::InitializationError	=> 1,
-			Error::AuthenticationError	=> 2,
-			Error::OperationNotAllowed	=> 3,
-			Error::IoError				=> 4,
-			Error::InvalidData			=> 5,
-			Error::NoValidKey			=> 6,
-			Error::OperationCanceled	=> 7,
-			Error::OperationTimedOut	=> 8,
-			Error::ApiMisuse			=> 9,
-			Error::Other(errno)			=> errno
+			Error::InitializationError => 1,
+			Error::AuthenticationError => 2,
+			Error::OperationNotAllowed => 3,
+			Error::IoError             => 4,
+			Error::InvalidData         => 5,
+			Error::NoValidKey          => 6,
+			Error::OperationCanceled   => 7,
+			Error::OperationTimedOut   => 8,
+			Error::ApiMisuse           => 9,
+			Error::Other(errno)        => errno
 		}
 	}
 }
