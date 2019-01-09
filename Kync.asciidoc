@@ -48,11 +48,11 @@ An example of a real key capsule would look like this:
 [source,cpp]
 ----
 typedef struct {
-    char* version;           	// -> "de.KizzyCode.Kync.CapsuleV1"
-    char* capsule_format_uid;   // -> "AesGcmV1.B593CCDE-B5C3-433A-ABBA-9087FBF13E60"
+    char* version;            // -> "de.KizzyCode.Kync.CapsuleV1"
+    char* capsule_format_uid; // -> "AesGcmV1.B593CCDE-B5C3-433A-ABBA-9087FBF13E60"
     struct {
-        uint8_t* chachapoly_nonce;  // -> The AES-GCM nonce
-        uint8_t* sealed_key;        // -> The AES-GCM-sealed key
+        uint8_t* chachapoly_nonce; // -> The AES-GCM nonce
+        uint8_t* sealed_key;       // -> The AES-GCM-sealed key
     } plugin_payload;
 } KeyCapsule;
 ----
@@ -68,94 +68,205 @@ typedef struct {
 
 
 == Plugin API
-To achive a simple and cross-platform compatible API, we use dynamic libraries that expose a C API/ABI. All functions
-*MUST* be threadsafe. An operation *MUST NOT* take longer than 90 seconds.
+To achive a simple and cross-platform compatible API, we use dynamic libraries that expose a C API/ABI.
 
 
-=== API Overiew
- - `char const* init(uint8_t log_level)`: Initializes the library and returns it's API version. Before you do any
-   further API-calls to the library, you *MUST* call this function and validate the API version.
- - `char const* capsule_format_uid()`: The <<Fields,`capsule_format_uid`>> of the format implemented by the library
+=== General Rules
+These general rules apply to all API functions and *MUST* be respected by the plugins that implement this API:
 
- - `size_t buf_len_max(char const* fn_name)`: The *maximum* length a buffer will need to store all data for produced
-   by `fn_name`
-
- - `uint8_t capsule_key_ids(slice_t* buf)`: The capsule keys the plugin offers (useful if a plugin has it's own keystore
-   and supports multiple keys; e.g. GnuPG)
- - `uint8_t seal_key(uint8_t* der_tag, slice_t* der_payload, slice_t const* key, char const* capsule_key_id,
-   slice_t const* auth_info)`: Seals a key
- - `uint8_t open_capsule(slice_t* key, uint8_t der_tag, slice_t const* der_payload, slice_t const* auth_info)`:
-   Opens a key-capsule
+ 1. Each function that can fail returns an <<Errors,error>>
+ 2. To pass data around, we use `slice_t`
+ 3. No ownership is transferred:
+     - the slices passed to the plugin are allocated and freed by the caller
+     - the slices returned by the plugin are constant memory that *MUST* be valid as long as the plugin is loaded
+ 4. An API-call *MUST NOT* take longer than 90 seconds before returning
+ 5. All functions *MUST* be threadsafe (provided that their parameters are threadsafe)
 
 
-=== Initialization
-To initialize the library and get the API version, load and call `char const* init(uint8_t log_level)`.
+=== API Overview
+These functions are defined by the API and *MUST* be implemented:
 
-This function initializes the library on the current thread with a given log-level (`0` means no logging to StdErr) and
-returns a constant string that identifies the API. The API defined by this document is `de.KizzyCode.KeyCapsule.Api.v1`.
-If the function returns `NULL`, this means that a fatal error occurred during initialization.
-
-
-=== Capsule Format UID
-To get the payload format UID, load and call `char const* capsule_format_uid()`.
-
-This function returns a constant string that contains the payload format UID.
+ - `init`: Takes care of the library initialization and API version validation
+ - `capsule_format_uid`: Returns the capsule format UID for the implemented format
+ - `buf_len_max`: Returns the *maximum* length a buffer will need for a given function
+ - `capsule_key_ids`: Gets all available capsule key IDs (for plugins that have their own key storage; e.g. GnuPG)
+ - `seal`: Seals some key bytes into a capsule
+ - `open`: Extracts the key bytes from a capsule
 
 
-=== Capsule Key IDs
-To get the capsule keys offered by the plugin, load and call `uint8_t capsule_key_ids(slice_t* key_ids)`.
+=== init
+[source,cpp]
+----
+error_t init(uint8_t api_version, uint8_t logging_level);
+----
 
-This function writes all key ID strings (including their trailing zero byte) into `key_ids` and adjusts `data_len`
-accordingly. The function may return an <<Error,error>>.
+This function initializes the library and returns an <<Errors,`error_t`>> to check if the initialization failed.
 
+Parameters:
 
-=== Buffer Maximum Length
-To get the *maximum* length a buffer needs to store all data produced by a function, load and call
-`size_t buf_len_max(char const* fn_name)`.
-
-This function returns the maximum length of data produced by another function `fn_name` so that you can allocate a
-buffer accordingly.
-
-
-=== Seal Key
-To seal a key, load and call `uint8_t seal_key(uint8_t* der_tag, slice_t* der_payload, slice_t const* key_to_seal,
-char const* capsule_key_id, slice_t const* auth_info)`.
-
-This function seals a key using the `capsule_key` and writes the resulting DER-tag and -payload into `der_tag` and
-`der_payload`. The function may return an <<Error,error>>.
+ - `api_version`: The API version _expected by the caller_. The plugin *MUST* validate the expected version and return
+   an error if it does not implement it. The API version defined by this document is `1`.
+ - `logging_level`: The logging level the plugin should use (`0` means no logging). _Note: This only applies to StdErr_
 
 
-=== Open Capsule
-To open a capsule, load and call `uint8_t open_capsule(slice_t* key, uint8_t der_tag, slice_t const* der_payload,
-slice_t const* auth_info)`.
+=== capsule_format_uid
+[source,cpp]
+----
+slice_t capsule_format_uid();
+----
 
-This function opens the DER-tag/-payload and writes the resulting key into `buf`. The function may return an
-<<Error,error>>.
+This function returns the capsule format UID for the format implemented by the library. It *MUST NOT* fail.
 
 
-=== Slice Type
+=== buf_len_max
+[source,cpp]
+----
+size_t buf_len_max(slice_t const* fn_name);
+----
+
+This function returns the *maximum* length a buffer needs to store all data produced by a function. It *MUST NOT* fail
+(return `0` in case of an invalid function name).
+
+Parameter `fn_name`: The function name's bytes. The slice's length must be equal to the function name _without '\0'
+termination_.
+
+
+=== capsule_key_ids
+[source,cpp]
+----
+error_t capsule_key_ids(slice_t* id_buffer);
+----
+
+This function writes all available capsule key IDs into `id_buffer`. This function is useful if the plugin offers it's
+own key store that you can/must use (e.g. GnuPG).
+
+The IDs are `uint8_t[256]`-arrays, which are just concatenated and written to `id_buffer` (whose length is then adjusted
+accordingly). If an ID is shorter than 256 bytes, it *MUST* be '\0'-padded. The ID must be an UTF-8 string.
+
+Parameter `id_buffer`: The buffer into which the IDs are written. To create a sufficiently large buffer, use
+`buf_len_max`.
+
+
+=== seal
+[source,cpp]
+----
+error_t seal(
+	uint8_t* der_tag, slice_t* der_payload,
+	slice_t const* key_to_seal,
+	slice_t const* capsule_key_id, slice_t const* user_secret
+);
+----
+
+This function seals the key bytes in `key_to_seal` and writes the resulting DER data in `der_tag`/`der_payload`.
+
+Parameters:
+
+ - `der_tag`: A pointer to which the resulting DER tag is written; see <<Capsule Format>> for more information.
+ - `der_payload`: The buffer into which the DER payload is written; see <<Capsule Format>> for more information.
+ - `key_to_seal`: The slice containing the key bytes to seal
+ - `capsule_key_id`: The capsule key ID to use (see `capsule_key_ids`). This parameter *MAY* be `NULL` if it's not
+   necessary for the call.
+ - `user_secret`: A user-provided secret. This parameter may have multiple, plugin-dependent purposes; ranging from a
+   hardware-token-PIN to the capsule key itself. It *MAY* be `NULL` if it's not necessary for the call – however _if_ it
+   is `NULL`, a plugin *MUST NOT* perform any authentication attempts that could decrease a retry counter.
+
+
+=== open
+[source,cpp]
+----
+error_t open(
+	slice_t* key,
+	uint8_t der_tag, slice_t const* der_payload,
+	slice_t const* user_secret
+);
+----
+
+This function opens a key capsule and writes the resulting key bytes into `key`.
+
+Parameters:
+
+ - `key`: The buffer to which the resulting key is written
+ - `der_tag`: The DER tag; see <<Capsule Format>> for more information.
+ - `der_payload`: The DER payload; see <<Capsule Format>> for more information.
+ - `user_secret`: A user-provided secret. This parameter may have multiple, plugin-dependent purposes; ranging from a
+   hardware-token-PIN to the capsule key itself. It *MAY* be `NULL` if it's not necessary for the call – however _if_ it
+   is `NULL`, a plugin *MUST NOT* perform any authentication attempts that could decrease a retry counter.
+
+
+=== slice_t
 The slice type is a type that represents a contiguous region of memory where `data` is pointing to the begin of the
-memory region and `data_len` announces it's size in bytes.
+memory region, `len` announces the amount of valid memory.
 
 [source,cpp]
 ----
 typedef struct {
     uint8_t* data;
-    size_t data_len;
+    size_t len;
 } slice_t;
 ----
 
 
 === Errors
-The following error codes are defined; however plugins *MAY* use another *undefined* error code within `[128, 255)`.
+Errors are defines as a constant error type-ID plus some additional type-dependent error information:
 
- * `0`: ENONE – this return value indicates that no error occurred
- * `1`: EINIT – the library could not be initialized
- * `2`: EACCES – invalid/missing authentication
- * `3`: EPERM – the operation is not permitted
- * `4`: EIO – an I/O-related error occurred
- * `5`: EILSEQ – invalid data in capsule payload
- * `6`: ENOKEY – no valid key to decrypt the data
- * `7`: ECANCELED – the operation was canceled by either the caller or the plugin
- * `8`: ETIMEDOUT – the operation timed out
- * `9`: EINVAL – an API-misuse occurred
+[source,cpp]
+----
+typedef struct {
+	uint8_t type_id[16]; // -> the error type as `\0`-padded string (e.g. "ENONE" or "EINIT")
+
+	uint8_t file[256];   // -> the file where the error occurred as `\0`-padded string (e.g. "main.c")
+	uint32_t line;       // -> the line where the error occurred
+	uint8_t description[1024];   // -> an error description as `\0`-padded string
+
+	uint64_t info;       // -> some type-dependent error info
+} error_t;
+----
+
+
+==== ENONE
+`ENONE` is the placeholder if no error occurred. `info` is unused.
+
+
+==== EINIT
+`EINIT` indicates a fatal error during library initialization. `info` is unused.
+
+
+==== EPERM
+`EPERM` indicates that an operation is not permitted (without providing authentication data).
+
+`info` indicates if the action requires authentication (`!= 0`) or if the action will always fail (`== 0`).
+
+
+==== EACCES
+`EACCES` indicates an authentication error. `info` indicates the amount of retries left; if there is no retry-limit,
+`info` is `UINT64_MAX`.
+
+
+==== EIO
+`EIO` indicates an I/O-related error. `info` is unused.
+
+
+==== EILSEQ
+`EILSEQ` indicates invalid capsule data. `info` is unused.
+
+
+==== ENOKEY
+`ENOKEY` indicates that there is no matching key available to decrypt the capsule. `info` is unused.
+
+
+==== ECANCELED
+`ECANCELED` indicates that the operation was canceled. `info` is unused.
+
+
+==== ETIMEDOUT
+`ETIMEDOUT` indicates that the operation timed out – either because it hit the 90s deadline or because something else
+timed out (e.g. hardware token). `info` is unused.
+
+
+==== EINVAL
+`EINVAL` indicates that an API misuse occurred. `info` is the `0`-based index of the invalid argument.
+
+
+==== EOTHER
+`EOTHER` indicates that an unspecified fatal error occurred. `info` *MAY* be a plugin-specific error code and *MUST* be
+ignored if it's meaning is unknown.

@@ -11,82 +11,52 @@ macro_rules! check {
 #[macro_use] extern crate asn1_der;
 
 
+mod ffi;
 mod plugin;
 mod capsule;
 mod pool;
 
-use ::{
-	asn1_der::Asn1DerError,
-	std::{ ffi::NulError, io::{ Error as IoError, ErrorKind as IoErrorKind } }
-};
+use ::{ asn1_der::Asn1DerError, std::io::{ Error as IoError, ErrorKind as IoErrorKind } };
 pub use self::{ capsule::Capsule, pool::Pool };
 
 
 /// A plugin error
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
-pub enum PluginError {
+pub enum PluginErrorType {
 	/// The library could not be initialized
-	InitializationError,
+	EInit,
+	///
+	EPerm{ requires_authentication: bool },
 	/// An authentication error occurred (e.g. bad PIN, password etc.)
-	AuthenticationError,
-	/// The operation is not allowed
-	OperationNotAllowed,
+	EAccess{ retries_left: Option<u64> },
 	/// An plugin internal I/O-error occurred
-	IoError,
-	/// Invalid data in plugin payload
-	InvalidData,
+	EIO,
+	/// Invalid data in key capsule
+	EIlSeq,
 	/// There is no valid key available to decrypt the data
-	NoValidKey,
+	ENoKey,
 	/// The operation was canceled by the user
-	OperationCanceled,
+	ECancelled,
 	/// The operation timed out (e.g. took longer than 90s)
-	OperationTimedOut,
+	ETimedOut,
 	/// A plugin-related API error
-	ApiMisuse,
+	EInval{ argument_index: u64 },
 	/// Another (plugin specific) error occurred
-	Other(u8)
-}
-impl PluginError {
-	/// Checks `errno` and returns either nothing or the corresponding `PluginError`
-	pub fn check_errno(errno: u8) -> Result<(), Self> {
-		match errno {
-			0 => Ok(()),
-			1 => Err(PluginError::InitializationError),
-			2 => Err(PluginError::AuthenticationError),
-			3 => Err(PluginError::OperationNotAllowed),
-			4 => Err(PluginError::IoError),
-			5 => Err(PluginError::InvalidData),
-			6 => Err(PluginError::NoValidKey),
-			7 => Err(PluginError::OperationCanceled),
-			8 => Err(PluginError::OperationTimedOut),
-			9 => Err(PluginError::ApiMisuse),
-			other => Err(PluginError::Other(other))
-		}
-	}
+	EOther{ code: u64 }
 }
 
 
 /// The crate's error type
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub enum Error {
 	/// A plugin error occurred
-	PluginError(PluginError),
+	PluginError{ file: String, line: u32, description: String, error_type: PluginErrorType },
 	/// A library related I/O-error occurred
 	IoError(IoErrorKind),
 	/// An invalid API-call was made (e.g. an invalid capsule format or capsule key ID was provided)
 	ApiMisuse,
 	/// Something is unsupported (e.g. the plugin's API version or the capsule format)
 	Unsupported
-}
-impl From<PluginError> for Error {
-	fn from(plugin_error: PluginError) -> Self {
-		Error::PluginError(plugin_error)
-	}
-}
-impl From<NulError> for Error {
-	fn from(_: NulError) -> Self {
-		Error::ApiMisuse
-	}
 }
 impl From<IoErrorKind> for Error {
 	fn from(io_error_kind: IoErrorKind) -> Self {

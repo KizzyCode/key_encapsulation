@@ -1,5 +1,5 @@
-use crate::{Error, PluginError, Capsule, plugin::{ Plugin, CSlice, CSliceMut } };
-use ::{ asn1_der::DerObject, std::{ path::Path, collections::HashMap, ffi::{ CStr, CString } } };
+use crate::{Error, Capsule, plugin::Plugin, ffi::FromCStr };
+use ::{ asn1_der::DerObject, std::{ path::Path, collections::HashMap } };
 
 
 /// A plugin-pool that manages the loading and the "capsule format UID" <-> plugin relationship
@@ -11,12 +11,14 @@ impl Pool {
 	pub fn new() -> Self {
 		Self{ plugins: HashMap::new() }
 	}
+	
 	/// Creates a new plugin pool and loads the plugin at `path`
 	pub fn with_plugin(path: impl AsRef<Path>) -> Result<Self, Error> {
 		let mut pool = Pool::new();
 		pool.load(path)?;
 		Ok(pool)
 	}
+	
 	/// Creates a new plugin pool and loads the plugins in `paths`
 	pub fn with_plugins<'a>(paths: impl Iterator<Item = &'a (impl AsRef<Path> + 'a)>)
 		-> Result<Self, Error>
@@ -31,8 +33,8 @@ impl Pool {
 	pub fn load<T: AsRef<Path>>(&mut self, path: T) -> Result<&mut Self, Error> {
 		// Load plugin
 		let plugin = Plugin::load(path)?;
-		let capsule_format_uid = unsafe{ CStr::from_ptr((plugin.capsule_format_uid)()) }
-			.to_str().unwrap().to_string();
+		let c_str = plugin.capsule_format_uid();
+		let capsule_format_uid = String::from_c_str(c_str);
 		
 		// Ensure that we don't already have a plugin with this format UID and store the plugin
 		check!(!self.plugins.contains_key(&capsule_format_uid), Error::ApiMisuse);
@@ -45,23 +47,24 @@ impl Pool {
 	pub fn capsule_format_uids(&self) -> Vec<String> {
 		self.plugins.keys().map(|k| k.to_owned()).collect()
 	}
+	
 	/// The available capsule keys for a capsule format (or rather the capsule key IDs offered by
 	/// the loaded plugin that implements this format)
-	pub fn capsule_keys(&self, capsule_format_uid: impl ToString) -> Result<Vec<String>, Error> {
-		// Get plugin
+	pub fn capsule_key_ids(&self, capsule_format_uid: impl ToString) -> Result<Vec<String>, Error> {
+		// Load the corresponding plugin and create a buffer
 		let plugin = self.plugin(&capsule_format_uid)?;
+		let mut buf = vec![0; plugin.buf_len_max("capsule_key_ids")];
+		let buf_len = plugin.capsule_key_ids(&mut buf)?;
 		
-		// Allocate a buffer for the capsule key IDs and get them
-		let mut buf = vec![0u8; Self::buf_max_len(plugin, b"capsule_key_ids\0")];
-		let mut buf = CSliceMut::with(&mut buf);
-		PluginError::check_errno(unsafe{ (plugin.capsule_key_ids)(&mut buf) })?;
+		// Check buffer length and truncate buffer
+		assert_eq!(buf_len % 256, 0, "Plugin API violation");
+		buf.truncate(buf_len);
 		
 		// Parse the IDs
-		let (mut ids, mut pos) = (Vec::new(), 0);
-		while pos < buf.data_len {
-			let id = unsafe{ CStr::from_ptr(buf.data.offset(pos as _) as _) };
-			pos += id.to_bytes_with_nul().len();
-			ids.push(id.to_str().unwrap().to_owned());
+		let mut ids = Vec::new();
+		for i in (0..buf.len()).step_by(256) {
+			let id = String::from_c_str(&buf[i .. i + 256]);
+			ids.push(id);
 		}
 		Ok(ids)
 	}
@@ -69,10 +72,11 @@ impl Pool {
 	
 	/// Predicts the *maximum* length for a key capsule
 	pub fn sealed_max_len(&self, capsule_format_uid: impl ToString) -> Result<usize, Error> {
-		let payload_max_len =
-			Self::buf_max_len(self.plugin(&capsule_format_uid)?, b"seal_key\0");
-		Ok(Capsule::compute_serialized_len(capsule_format_uid, payload_max_len))
+		let plugin_payload_len = self.plugin(&capsule_format_uid)?
+			.buf_len_max("seal");
+		Ok(Capsule::compute_serialized_len(capsule_format_uid, plugin_payload_len))
 	}
+	
 	/// Seals `key`
 	///
 	/// Arguments:
@@ -80,70 +84,55 @@ impl Pool {
 	///  - `capsule_format_uid`: The capsule format to use (a plugin that implements this format
 	///    must be loaded)
 	///  - `capsule_key_id`: The ID of the capsule key to use
-	///  - `auth_info`: An authentication info (e.g. PIN/password etc.) passed to the plugin
+	///  - `user_secret`: An authentication info/user secret (e.g. PIN/password etc.) passed to the
+	///    plugin
 	pub fn seal<'a>(&self, key: &[u8], capsule_format_uid: impl ToString,
-		capsule_key_id: impl AsRef<str>, auth_info: &[u8]) -> Result<Capsule, Error>
+		capsule_key_id: Option<&str>, user_secret: Option<&[u8]>) -> Result<Capsule, Error>
 	{
 		// Load the corresponding plugin and create a buffer
 		let plugin = self.plugin(&capsule_format_uid)?;
-		let mut tag = 0u8;
-		let mut payload = vec![0u8; Self::buf_max_len(plugin, b"seal_key\0")];
+		let mut der_tag = 0u8;
+		let mut der_payload = vec![0u8; plugin.buf_len_max("seal")];
 		
-		// Seal the key
-		let payload_len = {
-			// Create the slice and a CString for the capsule key ID
-			let mut payload_slice = CSliceMut::with(&mut payload);
-			let capsule_key_id = CString::new(capsule_key_id.as_ref())
-				.map_err(|_| Error::ApiMisuse)?;
-			
-			// Call the library
-			PluginError::check_errno(unsafe{ (plugin.seal_key)(
-				&mut tag, &mut payload_slice, &CSlice::with(key),
-				capsule_key_id.as_ptr(), &CSlice::with(auth_info)
-			) })?;
-			payload_slice.data_len
-		};
-		payload.truncate(payload_len);
+		// Seal the key and create the capsule
+		let der_payload_len = plugin.seal(
+			&mut der_tag, &mut der_payload, key,
+			capsule_key_id, user_secret
+		)?;
+		der_payload.truncate(der_payload_len);
 		
-		// Create capsule
-		let plugin_payload = DerObject::new(tag.into(), payload.into());
-		Ok(Capsule::new(capsule_format_uid, plugin_payload))
+		Ok(Capsule::new(
+			capsule_format_uid,
+			DerObject::new(der_tag.into(), der_payload.into())
+		))
 	}
 	
 	
 	/// Predicts the *maximum* length for an opened key
 	pub fn opened_max_len(&self, capsule_format_uid: impl ToString) -> Result<usize, Error>	{
-		Ok(Self::buf_max_len(self.plugin(&capsule_format_uid)?, b"open_capsule\0"))
+		Ok(self.plugin(&capsule_format_uid)?.buf_len_max("open"))
 	}
+	
 	/// Opens `capsule`
 	///
 	/// Arguments:
 	///  - `key`: The buffer to write the unsealed key to
 	///  - `capsule`: The capsule to open
-	///  - `auth_info`: An authentication info (e.g. PIN/password etc.) passed to the plugin
-	pub fn open<'a>(&self, key: &mut[u8], capsule: &Capsule, auth_info: &[u8])
+	///  - `user_secret`: An authentication info (e.g. PIN/password etc.) passed to the plugin
+	pub fn open<'a>(&self, key: &mut[u8], capsule: &Capsule, user_secret: Option<&[u8]>)
 		-> Result<usize, Error>
 	{
-		// Load the corresponding plugin
+		// Load the corresponding plugin and alias the DER-object
 		let plugin = self.plugin(&capsule.capsule_format_uid)?;
+		let der = &capsule.plugin_payload;
 		
-		// Create a buffer and open the plugin
-		let mut key_slice = CSliceMut::with(key);
-		PluginError::check_errno(unsafe{ (plugin.open_capsule)(
-			&mut key_slice, capsule.plugin_payload.tag.into(),
-			&CSlice::with(&capsule.plugin_payload.value.data), &CSlice::with(auth_info)
-		) })?;
-		
-		Ok(key_slice.data_len)
+		// Open the capsule
+		plugin.open(key, der.tag.into(), &der.value.data, user_secret)
 	}
 	
 	
 	/// Gets a reference to a loaded plugin or returns an `KeyEncapsulationError::ApiMisuse` error
 	fn plugin(&self, capsule_format_uid: &ToString) -> Result<&Plugin, Error> {
 		self.plugins.get(&capsule_format_uid.to_string()).ok_or(Error::ApiMisuse)
-	}
-	/// The *maximum* length a buffer will need to store all data for produced by `fn_name`
-	fn buf_max_len(plugin: &Plugin, fn_name: &[u8]) -> usize {
-		unsafe{ (plugin.buf_len_max)(fn_name.as_ptr() as _) }
 	}
 }
