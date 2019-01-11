@@ -13,7 +13,7 @@ https://github.com/KizzyCode/kync/blob/master/Kync.asciidoc[KyNc-compatible] key
 loading multiple plugins into a pool and provides a Rust API to seal keys/open capsules with them.
 
 
-== What do KyNc and libkync do?
+== What is the purpose of KyNc and libkync?
 Short: Abstracting key management away.
 
 Long: KyNc https://github.com/KizzyCode/kync/blob/master/Kync.asciidoc[defines] and libkync implements an interface,
@@ -28,6 +28,6 @@ all applications that implement KyNc.
 This library and standard are alpha and neither audited nor frozen. Use at your own risk and feel free to contribute.
 
 
-== Known plugins that implement KyNc:
+== Known plugins that implement KyNc
 
- – Currently none – but I'm working on a GnuPG plugin to utilize my Yubikey 🙃
+ - Currently none – but I'm working on a GnuPG plugin to utilize my Yubikey 🙃
