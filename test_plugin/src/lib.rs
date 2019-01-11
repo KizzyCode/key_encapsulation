@@ -5,7 +5,7 @@ macro_rules! check {
 
 
 mod ffi;
-use crate::ffi::{ FromCStr, CSlice, CSliceMut, ErrorType, CError };
+use crate::ffi::{ FromCStr, CSlice, CSliceMut, CError, errno::* };
 
 
 const TEST_USER_SECRET: &[u8] = b"Testolope";
@@ -16,7 +16,7 @@ pub static FORMAT_UID: &[u8] = b"TestCapsuleFormat.3A0351A7-FE90-4383-9E68-FCC20
 pub extern "C" fn init(api_version: u8, _log_level: u8) -> CError {
 	match api_version {
 		1 => ok!(),
-		_ => err!(ErrorType::EInit, "Invalid API version", 0)
+		_ => err!(EINIT, "Invalid API version", 0)
 	}
 }
 
@@ -61,17 +61,17 @@ pub extern "C" fn buf_len_max(fn_name: *const CSlice) -> usize {
 	// Unwrap `user_secret`
 	let user_secret = match user_secret {
 		Some(user_secret) => unsafe{ user_secret.as_slice() },
-		None => err!(ErrorType::EPerm, "Authentication is required", 1)
+		None => err!(EPERM, "Authentication is required", 1)
 	};
 	
 	// Check `user_secret` (note that this is inherently insecure)
 	match user_secret {
 		TEST_USER_SECRET => (),
-		_ => err!(ErrorType::EAccess, "Invalid authentication", u64::max_value())
+		_ => err!(EACCESS, "Invalid authentication", u64::max_value())
 	}
 	
 	// Set payload length and unwrap it
-	check!(der_payload.len >= key.len(), err!(ErrorType::EInval, "`der_payload` is too small", 1));
+	check!(der_payload.len >= key.len(), err!(EINVAL, "`der_payload` is too small", 1));
 	der_payload.len = key.len();
 	let der_payload = unsafe{ der_payload.as_slice_mut() };
 	
@@ -92,18 +92,18 @@ pub extern "C" fn buf_len_max(fn_name: *const CSlice) -> usize {
 	// Unwrap and check `auth_info` (note that this is inherently insecure)
 	let user_secret = match user_secret {
 		Some(user_secret) => unsafe{ user_secret.as_slice() },
-		None => err!(ErrorType::EPerm, "Authentication is required", 1)
+		None => err!(EPERM, "Authentication is required", 1)
 	};
 	match user_secret {
 		TEST_USER_SECRET => (),
-		_ => err!(ErrorType::EAccess, "Invalid authentication", u64::max_value())
+		_ => err!(EACCESS, "Invalid authentication", u64::max_value())
 	}
 	
 	// Check payload
-	check!(der_tag == 0x04, err!(ErrorType::EIlSeq, "Invalid capsule", 0));
+	check!(der_tag == 0x04, err!(EILSEQ, "Invalid capsule", 0));
 	
 	// Check and unwrap `key`
-	check!(key.len >= der_payload.len(), err!(ErrorType::EInval, "`key` is too small", 0));
+	check!(key.len >= der_payload.len(), err!(EINVAL, "`key` is too small", 0));
 	key.len = der_payload.len() ;
 	let key = unsafe{ key.as_slice_mut() };
 	
