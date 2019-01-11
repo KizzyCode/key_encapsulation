@@ -93,26 +93,22 @@ fn test_auth_errors() {
 	let pool = create_pool();
 	
 	// Sealing
-	assert_eq!(
-		pool.seal(
-			KEY, CAPSULE_FORMAT_UID,
-			None, None
-		).unwrap_err(),
-		Error::PluginError {
-			file: "test_plugin/src/lib.rs".to_string(), line: 64,
-			description: "Authentication is required".to_string(),
-			error_type: PluginErrorType::EPerm{ requires_authentication: true }
-		}
-	);
+	let err = pool.seal(
+		KEY, CAPSULE_FORMAT_UID,
+		None, None
+	).unwrap_err();
+	match err {
+		Error::PluginError{ error_type, .. } =>
+			assert_eq!(error_type, PluginErrorType::EPerm{ requires_authentication: true }),
+		_ => panic!()
+	}
 	
 	// Opening
 	let capsule = Capsule::parse(CAPSULE.iter()).unwrap();
-	assert_eq!(
-		pool.open(&mut[], &capsule, None).unwrap_err(),
-		Error::PluginError {
-			file: "test_plugin/src/lib.rs".to_string(), line: 95,
-			description: "Authentication is required".to_string(),
-			error_type: PluginErrorType::EPerm{ requires_authentication: true }
-		}
-	);
+	let err = pool.open(&mut[], &capsule, None).unwrap_err();
+	match err {
+		Error::PluginError{ error_type, .. } =>
+			assert_eq!(error_type, PluginErrorType::EPerm{ requires_authentication: true }),
+		_ => panic!()
+	}
 }
