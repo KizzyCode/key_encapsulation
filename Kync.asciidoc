@@ -5,9 +5,9 @@
 == General
 Kync describes a **K**e**Y**e**NC**apsulation format as well as a plugin-API for key encapsulation plugins.
 
-Key encapsulation is the process of encrypting an already existing key with another different key. This is especially
-useful if you want to use multiple different keys to open your data; e.g. an encrypted email with multiple recipients or
-an encrypted file system with multiple users.
+Key encapsulation is the process of encrypting an already existing key with another different key. This allows you to
+separate your application from the key storage so that the user can specify how the key is stored – e.g.
+password-encrypted in a file or in the OS' keychain etc.
 
 
 == Capsule Format
