@@ -11,9 +11,9 @@ fn load_plugin() -> Plugin {
 	
 	// Append library name
 	match true {
-		_ if cfg!(target_os = "windows") => path.push("test_plugin.dll"),
-		_ if cfg!(target_os = "macos") => path.push("libtest_plugin.dylib"),
-		_ if cfg!(target_family = "unix") => path.push("libtest_plugin.so"),
+		_ if cfg!(target_os = "windows") => path.push("kync_test_plugin.dll"),
+		_ if cfg!(target_os = "macos") => path.push("libkync_test_plugin.dylib"),
+		_ if cfg!(target_family = "unix") => path.push("libkync_test_plugin.so"),
 		_ => unimplemented!("Your current platform has no test yet")
 	};
 	

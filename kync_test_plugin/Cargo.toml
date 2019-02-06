@@ -1,0 +1,24 @@
+[package]
+name = "kync_test_plugin"
+edition = "2018"
+version = "0.1.0"
+authors = ["KizzyCode <development@kizzycode.de>"]
+description = "A test plugin for kync"
+license = "BSD-2-Clause OR MIT"
+repository = "https://github.com/KizzyCode/kync"
+readme = "README.md"
+
+
+[lib]
+name = "kync_test_plugin"
+crate-type = ["dylib"]
+
+
+[dependencies]
+
+
+[profile.release]
+overflow-checks = true
+
+[profile.bench]
+overflow-checks = true

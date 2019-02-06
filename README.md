@@ -3,11 +3,11 @@
 [![Travis CI](https://travis-ci.org/KizzyCode/kync.svg?branch=master)](https://travis-ci.org/KizzyCode/kync)
 [![Appveyor](https://ci.appveyor.com/api/projects/status/github/KizzyCode/kync?svg=true)](https://ci.appveyor.com/project/KizzyCode/kync)
 
-# libkync
+# KyNc
 This crate is a Rust interface to [KyNc](https://github.com/KizzyCode/kync/blob/master/Kync.asciidoc) plugins.
 
 
-## What is the purpose of KyNc and libkync?
+## What is the purpose of KyNc and this crate?
 Short: Abstracting key management away.
 
 Long: [KyNc defines](https://github.com/KizzyCode/kync/blob/master/Kync.asciidoc) and this crate implements a plugin
