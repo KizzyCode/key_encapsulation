@@ -1,64 +1,19 @@
-use ::std::{ marker::PhantomData, slice };
+use ::std::{ slice, ptr, os::raw::c_void };
 
 
-/// Creates a string from a C-string
-pub trait FromCStr {
-	/// Creates a string from `c_str`; if `c_str` is not null-terminated, the entire slice is
-	/// converted to a string
-	///
-	/// _Note: This function panics if the string is not UTF-8_
-	fn from_c_str(c_str: &[u8]) -> Self;
+/// Creates and returns a new `CError`/`error_t`
+#[macro_export]
+macro_rules! err {
+	($type_id:expr, $description:expr, $info:expr) => ({
+		crate::ffi::CError::new($type_id, file!(), line!(), $description, $info)
+	})
 }
-impl FromCStr for String {
-	fn from_c_str(c_str: &[u8]) -> Self {
-		// Find first zero byte
-		let len = c_str.iter()
-			.position(|b| *b == 0x00)
-			.unwrap_or(c_str.len());
-		
-		// Convert the bytes to a string
-		String::from_utf8(c_str[..len].to_vec()).unwrap()
-	}
-}
-
-
-/// An immutable `slice_t` representation
-#[repr(C)]
-pub struct CSlice<'a> {
-	pub data: *const u8,
-	pub len: usize,
-	_lifetime: PhantomData<&'a[u8]>
-}
-impl<'a> CSlice<'a> {
-	/// Creates a new `slice_t` over `slice`
-	pub fn new(slice: &'a[u8]) -> Self {
-		CSlice{ data: slice.as_ptr(), len: slice.len(), _lifetime: PhantomData }
-	}
-	
-	/// Creates a slice from `self`
-	pub unsafe fn as_slice(&self) -> &'a[u8] {
-		slice::from_raw_parts(self.data, self.len)
-	}
-}
-
-
-/// A mutable `slice_t` representation
-#[repr(C)]
-pub struct CSliceMut<'a> {
-	pub data: *mut u8,
-	pub len: usize,
-	_lifetime: PhantomData<&'a mut[u8]>
-}
-impl<'a> CSliceMut<'a> {
-	/// Creates a new `slice_t` over `slice`
-	pub fn new(slice: &'a mut[u8]) -> Self {
-		CSliceMut{ data: slice.as_mut_ptr(), len: slice.len(), _lifetime: PhantomData }
-	}
-	
-	/// Creates a mutable slice from `self`
-	pub unsafe fn as_slice_mut(&mut self) -> &'a mut[u8] {
-		slice::from_raw_parts_mut(self.data, self.len)
-	}
+/// Creates and returns an `ENONE` `CError`/`error_t`
+#[macro_export]
+macro_rules! ok {
+	() => ({
+		err!(crate::ffi::errno::ENONE, "Nothing happened; everything is fine :)", 0)
+	});
 }
 
 
@@ -67,6 +22,7 @@ impl<'a> CSliceMut<'a> {
 pub mod errno {
 	pub const ENONE: [u8; 16] = *b"ENONE\0\0\0\0\0\0\0\0\0\0\0";
 	pub const EINIT: [u8; 16] = *b"EINIT\0\0\0\0\0\0\0\0\0\0\0";
+	pub const ENOBUF: [u8; 16] = *b"ENOBUF\0\0\0\0\0\0\0\0\0\0";
 	pub const EPERM: [u8; 16] = *b"EPERM\0\0\0\0\0\0\0\0\0\0\0";
 	pub const EACCESS: [u8; 16] = *b"EACCESS\0\0\0\0\0\0\0\0\0";
 	pub const EIO: [u8; 16] = *b"EIO\0\0\0\0\0\0\0\0\0\0\0\0\0";
@@ -74,7 +30,6 @@ pub mod errno {
 	pub const ENOKEY: [u8; 16] = *b"ENOKEY\0\0\0\0\0\0\0\0\0\0";
 	pub const ECANCELED: [u8; 16] = *b"ECANCELED\0\0\0\0\0\0\0";
 	pub const ETIMEDOUT: [u8; 16] = *b"ETIMEDOUT\0\0\0\0\0\0\0";
-	pub const EINVAL: [u8; 16] = *b"EINVAL\0\0\0\0\0\0\0\0\0\0";
 	pub const EOTHER: [u8; 16] = *b"EOTHER\0\0\0\0\0\0\0\0\0\0";
 }
 
@@ -112,20 +67,43 @@ impl CError {
 			info
 		}
 	}
+	
+	/// Checks if `self` is `ENONE`
+	pub fn check(self) -> Result<(), Self> {
+		match self.type_id {
+			errno::ENONE => Ok(()),
+			_ => Err(self)
+		}
+	}
 }
 
 
-/// Creates and returns a new `CError`/`error_t`
-#[macro_export]
-macro_rules! err {
-	($type_id:expr, $description:expr, $info:expr) => ({
-		return crate::ffi::CError::new($type_id, file!(), line!(), $description, $info)
-	})
+/// A `slice_t` implementation
+#[repr(C)]
+pub struct CSlice {
+	data: *mut u8,
+	capacity: usize,
+	len: usize,
+	
+	handle: *mut c_void,
+	reallocate: Option<unsafe extern "C" fn(*mut Self, usize)>
 }
-/// Creates and returns an `ENONE` `CError`/`error_t`
-#[macro_export]
-macro_rules! ok {
-	() => ({
-		err!(crate::ffi::errno::ENONE, "Nothing happened; everything is fine :)", 0)
-	});
+impl CSlice {
+	/// The payload as slice
+	pub fn slice(&self) -> &[u8] {
+		unsafe{ slice::from_raw_parts(self.data, self.len) }
+	}
+	/// Writes `data` to the slice (tries to reallocate if necessary)
+	pub fn write(&mut self, data: &[u8]) -> Result<(), CError> {
+		// Ensure the capacity
+		if self.capacity < data.len() {
+			let reallocate = self.reallocate
+				.ok_or(err!(errno::ENOBUF, "Invalid buffer size", data.len() as u64))?;
+			unsafe{ reallocate(self, data.len()) }
+		}
+		
+		// Copy the data and adjust the length
+		unsafe{ ptr::copy(data.as_ptr(), self.data, data.len()); }
+		Ok(self.len = data.len())
+	}
 }

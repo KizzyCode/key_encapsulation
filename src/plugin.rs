@@ -1,25 +1,44 @@
-use crate::{ Error, ffi::{ CSlice, CSliceMut, CError } };
-use ::{ libloading::Library, std::{ ptr, path::Path } };
+use crate::{ Error, ffi::{ CSlice, AsCSlice, AsCSliceMut, CError } };
+use std::{ ptr, path::Path, fmt::{ Formatter, Debug, Result as FmtResult } };
+use libloading::Library;
 
 
+/// The current API version
 const API_VERSION: u8 = 1;
+
+
+/// A wrapper around the `64`-byte format UID
+#[derive(Copy, Clone)]
+pub struct FormatUid(pub [u8; 64]);
+impl PartialEq for FormatUid {
+	fn eq(&self, other: &Self) -> bool {
+		self.0.as_ref() == other.0.as_ref()
+	}
+}
+impl<T: AsRef<[u8]>> PartialEq<T> for FormatUid {
+	fn eq(&self, other: &T) -> bool {
+		self.0.as_ref() == other.as_ref()
+	}
+}
+impl Debug for FormatUid {
+	fn fmt(&self, f: &mut Formatter) -> FmtResult {
+		write!(f, "FormatUid({})", String::from_utf8_lossy(self.0.as_ref()))
+	}
+}
 
 
 /// A key capsule plugin (see "Kync.asciidoc" for further API documentation)
 pub struct Plugin {
-	capsule_format_uid: unsafe extern fn() -> CSlice<'static>,
-	buf_len_max: unsafe extern fn(fn_name: *const CSlice) -> usize,
+	capsule_format_uid: unsafe extern fn() -> [u8; 64],
 	
-	capsule_key_ids: unsafe extern fn(id_buffer: *mut CSliceMut) -> CError,
+	capsule_key_ids: unsafe extern fn(id_buffer: *mut CSlice<*mut u8>) -> CError,
 	seal: unsafe extern fn(
-		der_tag: *mut u8, der_payload: *mut CSliceMut,
-		key_to_seal: *const CSlice,
-		capsule_key_id: *const CSlice, user_secret: *const CSlice
+		payload: *mut CSlice<*mut u8>, key_to_seal: *const CSlice<*const u8>,
+		capsule_key_id: *const CSlice<*const u8>, user_secret: *const CSlice<*const u8>
 	) -> CError,
 	open: unsafe extern fn(
-		key: *mut CSliceMut,
-		der_tag: u8, der_payload: *const CSlice,
-		user_secret: *const CSlice
+		key: *mut CSlice<*mut u8>, payload: *const CSlice<*const u8>,
+		user_secret: *const CSlice<*const u8>
 	) -> CError,
 	
 	_library: Library
@@ -54,7 +73,6 @@ impl Plugin {
 		// Create plugin
 		Ok(Self {
 			capsule_format_uid: *unsafe{ library.get(b"capsule_format_uid\0")? },
-			buf_len_max: *unsafe{ library.get(b"buf_len_max\0")? },
 			
 			capsule_key_ids: *unsafe{ library.get(b"capsule_key_ids\0")? },
 			seal: *unsafe{ library.get(b"seal\0")? },
@@ -65,64 +83,61 @@ impl Plugin {
 	}
 	
 	/// The capsule format UID
-	pub fn capsule_format_uid(&self) -> &[u8] {
-		unsafe{ (self.capsule_format_uid)().as_slice() }
+	pub fn capsule_format_uid(&self) -> FormatUid {
+		FormatUid(unsafe{ (self.capsule_format_uid)() })
 	}
 	
-	/// The _maximum_ length a buffer needs to store all data produced by a function
-	pub fn buf_len_max(&self, fn_name: &str) -> usize {
-		unsafe{ (self.buf_len_max)(&CSlice::new(fn_name.as_bytes())) }
-	}
-	
-	/// Writes the available capsule key IDs into `buf` and returns the new buffer size
-	pub fn capsule_key_ids(&self, buf: &mut[u8]) -> Result<usize, Error> {
-		let mut buf = CSliceMut::new(buf);
+	/// The available capsule keys
+	pub fn capsule_key_ids(&self, mut buf: impl AsCSliceMut) -> Result<usize, Error> {
+		let mut buf = buf.c_slice();
 		unsafe{ (self.capsule_key_ids)(&mut buf) }.check()?;
-		Ok(buf.len)
+		Ok(buf.len())
 	}
 	
 	/// Seals a key into `der_payload` and returns the `der_payload` length
-	pub fn seal(&self, der_tag: &mut u8, der_payload: &mut[u8], key_to_seal: &[u8],
-		capsule_key_id: Option<&str>, user_secret: Option<&[u8]>) -> Result<usize, Error>
+	pub fn seal(&self, mut buf: impl AsCSliceMut, key_to_seal: impl AsCSlice,
+		capsule_key_id: Option<impl AsCSlice>, user_secret: Option<impl AsCSlice>)
+		-> Result<usize, Error>
 	{
-		// Create `slice_t`s
-		let mut der_payload = CSliceMut::new(der_payload);
-		let key_to_seal = CSlice::new(key_to_seal);
+		// Create buffer and readers
+		let mut buf = buf.c_slice();
 		
-		let capsule_key_id =
-			capsule_key_id.map(|i| CSlice::new(i.as_bytes()));
-		let user_secret = user_secret.map(|s| CSlice::new(s));
+		let mut capsule_key_id =
+			capsule_key_id.as_ref().map(|i| i.c_slice());
+		let mut user_secret =
+			user_secret.as_ref().map(|s| s.c_slice());
 		
 		// Map optionals to pointers
-		let capsule_key_id: *const CSlice = capsule_key_id.as_ref().map(|i| i as _)
-			.unwrap_or(ptr::null());
-		let user_secret: *const CSlice = user_secret.as_ref().map(|s| s as _)
-			.unwrap_or(ptr::null());
+		let capsule_key_id=
+			capsule_key_id.as_mut().map(|i| i as _)
+				.unwrap_or(ptr::null_mut());
+		let user_secret =
+			user_secret.as_mut().map(|s| s as _)
+				.unwrap_or(ptr::null_mut());
 		
 		// Call function
-		unsafe{ (self.seal)(
-			der_tag, &mut der_payload,
-			&key_to_seal, capsule_key_id, user_secret
-		) }.check()?;
-		Ok(der_payload.len)
+		unsafe{ (self.seal)(&mut buf, &key_to_seal.c_slice(), capsule_key_id, user_secret) }
+			.check()?;
+		Ok(buf.len())
 	}
 	
 	/// Opens the capsule into `key` and returns the `key` length
-	pub fn open(&self, key: &mut[u8], der_tag: u8, der_payload: &[u8], user_secret: Option<&[u8]>)
-		-> Result<usize, Error>
+	pub fn open(&self, mut buf: impl AsCSliceMut, payload: impl AsCSlice,
+		user_secret: Option<impl AsCSlice>) -> Result<usize, Error>
 	{
 		// Create `slice_t`s
-		let mut key = CSliceMut::new(key);
-		let der_payload = CSlice::new(der_payload);
+		let mut buf = buf.c_slice();
 		
-		let user_secret = user_secret.map(|s| CSlice::new(s));
+		let mut user_secret =
+			user_secret.as_ref().map(|s| s.c_slice());
 		
 		// Map optionals to pointers
-		let user_secret: *const CSlice = user_secret.as_ref().map(|s| s as _)
-			.unwrap_or(ptr::null());
+		let user_secret =
+			user_secret.as_mut().map(|s| s as _)
+				.unwrap_or(ptr::null_mut());
 		
 		// Call function
-		unsafe{ (self.open)(&mut key, der_tag, &der_payload, user_secret) }.check()?;
-		Ok(key.len)
+		unsafe{ (self.open)(&mut buf, &payload.c_slice(), user_secret) }.check()?;
+		Ok(buf.len())
 	}
 }

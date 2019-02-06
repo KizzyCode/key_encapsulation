@@ -1,5 +1,5 @@
-use crate::{ Error, PluginErrorType };
-use ::std::{ marker::PhantomData, slice, u64 };
+use crate::{ Error, ErrorKind };
+use std::{ marker::PhantomData, slice, usize, u64, cmp::min, ptr, os::raw::c_void };
 
 
 /// Creates a string from a C-string
@@ -23,37 +23,94 @@ impl FromCStr for String {
 }
 
 
-/// An immutable `slice_t` representation
-#[repr(C)]
-pub struct CSlice<'a> {
-	pub data: *const u8,
-	pub len: usize,
-	_lifetime: PhantomData<&'a[u8]>
+/// A trait for types that are convertible to a `CSlice<*const u8>`
+pub trait AsCSlice {
+	fn c_slice<'a>(&'a self) -> CSlice<'a, *const u8>;
 }
-impl<'a> CSlice<'a> {
-	/// Creates a new `slice_t` over `slice`
-	pub fn new(slice: &'a[u8]) -> Self {
-		CSlice{ data: slice.as_ptr(), len: slice.len(), _lifetime: PhantomData }
-	}
+/// A trait for types that are convertible to a `CSlice<*mut u8>`
+pub trait AsCSliceMut {
+	fn c_slice<'a>(&'a mut self) -> CSlice<'a, *mut u8>;
+}
+
+
+/// A `slice_t` implementation
+///
+/// This type is a C-ffi compatible struct over a slice, mutable slice or a mutable vector
+///
+/// _Warning: If the `CSlice` is passed as a mutable pointer, the `len`-field may get adjusted so
+/// that the underlying backing may be larger than the amount of meaningful bytes in `self`. To only
+/// get the payload, either use `slice()` or get the payload's length using `len()`._
+#[repr(C)]
+pub struct CSlice<'a, T> {
+	data: T,
+	capacity: usize,
+	len: usize,
 	
-	/// Creates a slice from `self`
-	pub unsafe fn as_slice(&self) -> &'a[u8] {
-		slice::from_raw_parts(self.data, self.len)
+	handle: *mut c_void,
+	reallocate: Option<unsafe extern "C" fn(*mut Self, usize)>,
+	_lifetime: PhantomData<&'a mut ()>
+}
+impl<'a> CSlice<'a, *mut u8> {
+	/// The length of the meaningful bytes
+	pub fn len(&self) -> usize {
+		self.len
+	}
+	/// The payload as slice
+	pub fn slice(&self) -> &[u8] {
+		unsafe{ slice::from_raw_parts(self.data, self.len) }
 	}
 }
-
-
-/// A mutable `slice_t` representation
-#[repr(C)]
-pub struct CSliceMut<'a> {
-	pub data: *mut u8,
-	pub len: usize,
-	_lifetime: PhantomData<&'a mut[u8]>
+impl AsCSlice for &[u8] {
+	fn c_slice<'a>(&'a self) -> CSlice<'a, *const u8> {
+		CSlice {
+			data: self.as_ptr(),
+			capacity: self.len(),
+			len: self.len(),
+			
+			handle: ptr::null_mut(),
+			reallocate: None,
+			_lifetime: PhantomData
+		}
+	}
 }
-impl<'a> CSliceMut<'a> {
-	/// Creates a new `slice_t` over `slice`
-	pub fn new(slice: &'a mut[u8]) -> Self {
-		CSliceMut{ data: slice.as_mut_ptr(), len: slice.len(), _lifetime: PhantomData }
+impl AsCSliceMut for &mut[u8] {
+	fn c_slice<'a>(&'a mut self) -> CSlice<'a, *mut u8> {
+		CSlice {
+			data: self.as_mut_ptr(),
+			capacity: self.len(),
+			len: self.len(),
+			
+			handle: ptr::null_mut(),
+			reallocate: None,
+			_lifetime: PhantomData
+		}
+	}
+}
+impl AsCSliceMut for &mut Vec<u8> {
+	fn c_slice<'a>(&'a mut self) -> CSlice<'a, *mut u8> {
+		/// The reallocation function for a vector
+		unsafe extern "C" fn reallocate(slice: *mut CSlice<*mut u8>, new_size: usize) {
+			// Extract pointers
+			let slice = slice.as_mut().unwrap();
+			let vec = (slice.handle as *mut Vec<u8>).as_mut().unwrap();
+			
+			// Resize vec and readjust slice fields
+			vec.resize(new_size, 0);
+			slice.data = vec.as_mut_ptr();
+			slice.capacity = vec.len();
+			slice.len = min(slice.len, vec.len())
+		}
+		
+		// Create the `CSlice`
+		CSlice {
+			data: self.as_mut_ptr(),
+			capacity: self.len(),
+			len: self.len(),
+			
+			handle: (*self as *mut Vec<u8>) as *mut c_void,
+			reallocate: Some(reallocate),
+			_lifetime: PhantomData
+		}
 	}
 }
 
@@ -62,6 +119,7 @@ impl<'a> CSliceMut<'a> {
 mod errno {
 	pub const ENONE: [u8; 16] = *b"ENONE\0\0\0\0\0\0\0\0\0\0\0";
 	pub const EINIT: [u8; 16] = *b"EINIT\0\0\0\0\0\0\0\0\0\0\0";
+	pub const ENOBUF: [u8; 16] = *b"ENOBUF\0\0\0\0\0\0\0\0\0\0";
 	pub const EPERM: [u8; 16] = *b"EPERM\0\0\0\0\0\0\0\0\0\0\0";
 	pub const EACCESS: [u8; 16] = *b"EACCESS\0\0\0\0\0\0\0\0\0";
 	pub const EIO: [u8; 16] = *b"EIO\0\0\0\0\0\0\0\0\0\0\0\0\0";
@@ -69,7 +127,6 @@ mod errno {
 	pub const ENOKEY: [u8; 16] = *b"ENOKEY\0\0\0\0\0\0\0\0\0\0";
 	pub const ECANCELED: [u8; 16] = *b"ECANCELED\0\0\0\0\0\0\0";
 	pub const ETIMEDOUT: [u8; 16] = *b"ETIMEDOUT\0\0\0\0\0\0\0";
-	pub const EINVAL: [u8; 16] = *b"EINVAL\0\0\0\0\0\0\0\0\0\0";
 	pub const EOTHER: [u8; 16] = *b"EOTHER\0\0\0\0\0\0\0\0\0\0";
 }
 
@@ -89,32 +146,39 @@ impl CError {
 	/// Checks if the `CError` is an error and converts it accordingly
 	pub fn check(self) -> Result<(), Error> {
 		// Match the error type
-		let error_type = match self.type_id {
+		let kind = match self.type_id {
 			errno::ENONE => return Ok(()),
-			errno::EINIT => PluginErrorType::EInit,
-			errno::EPERM => PluginErrorType::EPerm{ requires_authentication: self.info != 0 },
-			errno::EACCESS => PluginErrorType::EAccess {
+			
+			errno::EINIT => ErrorKind::InitializationError,
+			errno::ENOBUF => ErrorKind::BufferError {
+				required_size: match self.info {
+					s if s < usize::MAX as u64 => s as usize,
+					_ => panic!("Plugin API violation")
+				}
+			},
+			errno::EPERM => ErrorKind::PermissionDenied{ requires_authentication: self.info != 0 },
+			errno::EACCESS => ErrorKind::AccessDenied {
 				retries_left: match self.info {
 					u64::MAX => None,
 					retries_left => Some(retries_left)
 				}
 			},
-			errno::EIO => PluginErrorType::EIO,
-			errno::EILSEQ => PluginErrorType::EIlSeq,
-			errno::ENOKEY => PluginErrorType::ENoKey,
-			errno::ECANCELED => PluginErrorType::ECancelled,
-			errno::ETIMEDOUT => PluginErrorType::ETimedOut,
-			errno::EINVAL => PluginErrorType::EInval{ argument_index: self.info },
-			errno::EOTHER => PluginErrorType::EOther{ code: self.info },
+			errno::EIO => ErrorKind::IoError,
+			errno::EILSEQ => ErrorKind::InvalidData,
+			errno::ENOKEY => ErrorKind::NoKeyAvailable,
+			errno::ECANCELED => ErrorKind::OperationCancelled,
+			errno::ETIMEDOUT => ErrorKind::OperationTimedOut,
+			errno::EOTHER => ErrorKind::OtherPluginError{ errno: self.info },
 			_ => panic!("Plugin API violation")
 		};
 		
 		// Convert strings
-		Err(Error::PluginError{
-			file: String::from_c_str(&self.file),
-			line: self.line,
-			description: String::from_c_str(&self.description),
-			error_type
+		Err(Error {
+			kind, desc: Some(format!(
+				"Plugin error: {} @{}:{}",
+				String::from_c_str(&self.description),
+				String::from_c_str(&self.file), self.line
+			))
 		})
 	}
 }

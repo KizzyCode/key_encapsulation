@@ -3,68 +3,11 @@
 
 
 == General
-Kync describes a **K**e**Y**e**NC**apsulation format as well as a plugin-API for key encapsulation plugins.
+Kync describes a **K**e**Y**e**NC**apsulation plugin-API for key encapsulation plugins.
 
 Key encapsulation is the process of encrypting an already existing key with another different key. This allows you to
 separate your application from the key storage so that the user can specify how the key is stored – e.g.
-password-encrypted in a file or in the OS' keychain etc.
-
-
-== Capsule Format
-The capsule format describes the format of a key capsule.
-
-The idea is to specify a well defined capsule format that can be decoded by any implementation but is flexible enough to
-store an arbitrary amount of plugin-specific data. Therefore we include a version field, a format UID that specifies
-which plugin can decode the capsule and a payload field for the plugin-specific data.
-
-
-=== Encoding
-The key-capsule uses the ASN.1-DER serialization, but in this document we use C++-like structs to describe the format.
-
-We use the following types and map them like this:
-
- * A `struct` is serialized as an ASN.1-DER `SEQUENCE`
- * A `uint8_t`, `uint64_t` etc. is serialized as an ASN.1-DER `INTEGER`
- * A `char*` is serialized as an ASN.1-DER `UTF8String`
- * A `uint8_t*` is serialized as an ASN.1-DER `OctetString`
- * A `void*` indicates an unspecified type (similar to ASN.1-DER's `ANY`)
-
-If possible, your plugin *SHOULD* also use the ASN.1-DER encoding for everything in `plugin_payload` and limit itself to
-these 5 types. But if necessary, you can also use another ASN.1 type or wrap an arbitrary payload into an `uint8_t*`.
-
-
-=== Format
-A generic key capsule looks like this:
-[source,cpp]
-----
-typedef struct {
-    char* version;
-    char* capsule_format_uid;
-    void* plugin_payload;
-} KeyCapsule;
-----
-
-An example of a real key capsule would look like this:
-[source,cpp]
-----
-typedef struct {
-    char* version;            // -> "de.KizzyCode.Kync.CapsuleV1"
-    char* capsule_format_uid; // -> "AesGcmV1.B593CCDE-B5C3-433A-ABBA-9087FBF13E60"
-    struct {
-        uint8_t* chachapoly_nonce; // -> The AES-GCM nonce
-        uint8_t* sealed_key;       // -> The AES-GCM-sealed key
-    } plugin_payload;
-} KeyCapsule;
-----
-
-
-==== Fields
- * `version`: The capsule-format version; always `de.KizzyCode.Kync.CapsuleV1` for this specification
- * `capsule_format_uid`: The payload format UID – this format-UID *MUST* map to one format only. To achieve this, we use
-    a randomized suffix for our UIDs; e.g. `AesGcmV1.B593CCDE-B5C3-433A-ABBA-9087FBF13E60`. You *MAY* reimplement a
-    format and use the same format UID if your plugin is *fully compatible* with the already existing format.
- * `plugin_payload`: The payload that is passed to the plugin. This payload *MUST* be a valid ASN.1-DER field and
-   *SHOULD* be one of the four _specified_ types.
+password-encrypted in a file or in the OS' keychain.
 
 
 == Plugin API
@@ -72,66 +15,53 @@ To achive a simple and cross-platform compatible API, we use dynamic libraries t
 
 
 === General Rules
-These general rules apply to all API functions and *MUST* be respected by the plugins that implement this API:
+These general rules apply to all API functions and *MUST* be respected by any plugin that implement this API:
 
- 1. Each function that can fail returns an <<Errors,error>>
- 2. To pass data around, we use `slice_t`
- 3. No ownership is transferred:
-     - the slices passed to the plugin are allocated and freed by the caller
-     - the slices returned by the plugin are constant memory that *MUST* be valid as long as the plugin is loaded
- 4. An API-call *MUST NOT* take longer than 90 seconds before returning
- 5. All functions *MUST* be threadsafe (provided that their parameters are threadsafe)
+. Each function that may fail *MUST* return the error type
+. No ownership is transferred
+. An API-call *MUST NOT* take longer than 90 seconds before returning
+. All functions *MUST* be threadsafe as long as their parameters are not shared
 
 
 === API Overview
 These functions are defined by the API and *MUST* be implemented:
 
- - `init`: Takes care of the library initialization and API version validation
- - `capsule_format_uid`: Returns the capsule format UID for the implemented format
- - `buf_len_max`: Returns the *maximum* length a buffer will need for a given function
- - `capsule_key_ids`: Gets all available capsule key IDs (for plugins that have their own key storage; e.g. GnuPG)
- - `seal`: Seals some key bytes into a capsule
- - `open`: Extracts the key bytes from a capsule
+. `init`: Takes care of the library initialization and API version validation
+. `capsule_format_uid`: Returns the capsule format UID for the implemented format
+. `capsule_key_ids`: Gets all available capsule key IDs (for plugins that have their own key storage; e.g. GnuPG)
+. `seal`: Seals some key bytes into a capsule
+. `open`: Extracts the key bytes from a capsule
 
 
-=== init
+==== init
 [source,cpp]
 ----
 error_t init(uint8_t api_version, uint8_t logging_level);
 ----
 
-This function initializes the library and returns an <<Errors,`error_t`>> to check if the initialization failed.
+This function initializes the library and returns an `error_t` to check if the initialization failed.
 
 Parameters:
 
- - `api_version`: The API version _expected by the caller_. The plugin *MUST* validate the expected version and return
-   an error if it does not implement it. The API version defined by this document is `1`.
- - `logging_level`: The logging level the plugin should use (`0` means no logging). _Note: This only applies to StdErr_
+. `api_version`: The API version _expected by the caller_. The plugin *MUST* validate the expected version and return an
+  error if it does not implement it. The API version defined by this document is `1`.
+. `logging_level`: The logging level the plugin should use (`0` means no logging). _Note: This only applies to StdErr_
 
 
-=== capsule_format_uid
+==== capsule_format_uid
 [source,cpp]
 ----
-slice_t capsule_format_uid();
+uint8_t[64] capsule_format_uid();
 ----
 
-This function returns the capsule format UID for the format implemented by the library. It *MUST NOT* fail.
+This function returns the plugin's capsule format UID. It *MUST NOT* fail.
+
+The capsule format UID is a 64 byte UTF-8 format UID – this format-UID *MUST* map to one format only. To achieve this,
+we append a random UUID; e.g. `AES-256-GCM-IETF.v1________.B593CCDE-B5C3-433A-ABBA-9087FBF13E60`. If you write a fully
+compatible drop-in replacement for an already existing plugin, you *MAY* use the original format UID.
 
 
-=== buf_len_max
-[source,cpp]
-----
-size_t buf_len_max(slice_t const* fn_name);
-----
-
-This function returns the *maximum* length a buffer needs to store all data produced by a function. It *MUST NOT* fail
-(return `0` in case of an invalid function name).
-
-Parameter `fn_name`: The function name's bytes. The slice's length must be equal to the function name _without '\0'
-termination_.
-
-
-=== capsule_key_ids
+==== capsule_key_ids
 [source,cpp]
 ----
 error_t capsule_key_ids(slice_t* id_buffer);
@@ -140,69 +70,102 @@ error_t capsule_key_ids(slice_t* id_buffer);
 This function writes all available capsule key IDs into `id_buffer`. This function is useful if the plugin offers it's
 own key store that you can/must use (e.g. GnuPG).
 
-The IDs are `uint8_t[256]`-arrays, which are just concatenated and written to `id_buffer` (whose length is then adjusted
-accordingly). If an ID is shorter than 256 bytes, it *MUST* be '\0'-padded. The ID must be an UTF-8 string.
+The IDs are `uint8_t[256]`-arrays, which are just concatenated and written to `id_buffer`. If an ID is shorter than 256
+bytes, it *MUST* be `'\0'`-padded. The ID must be an UTF-8 string.
 
-Parameter `id_buffer`: The buffer into which the IDs are written. To create a sufficiently large buffer, use
-`buf_len_max`.
+Parameter `id_buffer`: The buffer into which the IDs are written.
 
 
-=== seal
+==== seal
 [source,cpp]
 ----
-error_t seal(
-	uint8_t* der_tag, slice_t* der_payload,
-	slice_t const* key_to_seal,
-	slice_t const* capsule_key_id, slice_t const* user_secret
-);
+error_t seal(slice_t* dest, slice_t const* key_to_seal, slice_t const* capsule_key_id, slice_t const* user_secret);
 ----
 
-This function seals the key bytes in `key_to_seal` and writes the resulting DER data in `der_tag`/`der_payload`.
+This function seals the key bytes in `key_to_seal` and writes the resulting data to `dest`.
 
 Parameters:
 
- - `der_tag`: A pointer to which the resulting DER tag is written; see <<Capsule Format>> for more information.
- - `der_payload`: The buffer into which the DER payload is written; see <<Capsule Format>> for more information.
- - `key_to_seal`: The slice containing the key bytes to seal
- - `capsule_key_id`: The capsule key ID to use (see `capsule_key_ids`). This parameter *MAY* be `NULL` if it's not
-   necessary for the call.
- - `user_secret`: A user-provided secret. This parameter may have multiple, plugin-dependent purposes; ranging from a
+. `dest`: The payload destination
+. `key_to_seal`: The slice containing the key bytes to seal
+. `capsule_key_id`: The capsule key ID to use (see `capsule_key_ids`). This parameter *MAY* be `NULL` if it's not
+  necessary for the call.
+. `user_secret`: A user-provided secret. This parameter may have multiple, plugin-dependent purposes; ranging from a
    hardware-token-PIN to the capsule key itself. It *MAY* be `NULL` if it's not necessary for the call – however _if_ it
    is `NULL`, a plugin *MUST NOT* perform any authentication attempts that could decrease a retry counter.
 
 
-=== open
+==== open
 [source,cpp]
 ----
-error_t open(
-	slice_t* key,
-	uint8_t der_tag, slice_t const* der_payload,
-	slice_t const* user_secret
-);
+error_t open(slice_t* dest, slice_t const* payload, slice_t const* user_secret);
 ----
 
-This function opens a key capsule and writes the resulting key bytes into `key`.
+This function opens a key capsule and writes the resulting key bytes into `dest`.
 
 Parameters:
 
- - `key`: The buffer to which the resulting key is written
- - `der_tag`: The DER tag; see <<Capsule Format>> for more information.
- - `der_payload`: The DER payload; see <<Capsule Format>> for more information.
- - `user_secret`: A user-provided secret. This parameter may have multiple, plugin-dependent purposes; ranging from a
-   hardware-token-PIN to the capsule key itself. It *MAY* be `NULL` if it's not necessary for the call – however _if_ it
-   is `NULL`, a plugin *MUST NOT* perform any authentication attempts that could decrease a retry counter.
+. `dest`: The plaintext-key destination
+. `payload`: The capsule payload
+. `user_secret`: A user-provided secret. This parameter may have multiple, plugin-dependent purposes; ranging from a
+  hardware-token-PIN to the capsule key itself. It *MAY* be `NULL` if it's not necessary for the call – however _if_ it
+  is `NULL`, a plugin *MUST NOT* perform any authentication attempts that could decrease a retry counter.
 
 
-=== slice_t
-The slice type is a type that represents a contiguous region of memory where `data` is pointing to the begin of the
-memory region, `len` announces the amount of valid memory.
-
+==== slice_t
 [source,cpp]
 ----
 typedef struct {
-    uint8_t* data;
-    size_t len;
+	uint8_t* data;
+	size_t capacity;
+	size_t len;
+
+	void* handle;
+	void (*reallocate)(slice_t* slice, size_t new_size);
 } slice_t;
+----
+
+A slice is a struct that holds all components to represent a vector-type. The advantage of this pattern (in comparison
+to a simple `ptr,len`-pattern) is, that it allows dynamic memory reallocation from within the plugin.
+
+Fields:
+
+. `data`: A pointer to the allocated memory region
+. `len`: The amount of meaningful bytes at `data`
+. `capacity`: The amount of allocated memory
+. `handle`: A pointer to a handle (*MAY* handle)
+. `reallocate`: A callback to reallocate data (*MAY* be `NULL`) – if this function fails, it *MUST*
+  https://en.wikipedia.org/wiki/C_process_control#abort[abort] the application.
+
+Example:
+[source,cpp]
+----
+void reallocate(slice_t* slice, size_t new_size) {
+	auto vector = reinterpret_cast<std::vector<uint8_t>*>(slice->handle);
+	vector->resize(new_size);
+
+	slice->data = vector->data();
+	slice->capacity = new_size;
+	slice->len = std::min(slice->len, slice->capacity);
+}
+
+int main(int argc, const char** argv) {
+	// Create a buffer and a slice over it
+	std::vector<uint8_t> buf;
+	slice_t slice {
+		.data = buf.data(), .capacity = buf.capacity(), .len = buf.size(),
+		.handle = &buf, .reallocate = reallocate
+	};
+
+	// Do something with slice
+	do_sth_with_slice(&slice);
+
+	// Take length from slice and do something with the buffer
+	buf.resize(slice.len);
+	do_sth_with_buf(&buf);
+
+	return 0;
+}
 ----
 
 
@@ -224,7 +187,7 @@ typedef struct {
 
 
 ==== ENONE
-`ENONE` is the placeholder if no error occurred. `info` is unused.
+`ENONE` is the placeholder if no error occurred. `info` is usually unused.
 
 
 ==== EINIT
@@ -232,14 +195,19 @@ typedef struct {
 
 
 ==== EPERM
-`EPERM` indicates that an operation is not permitted (without providing authentication data).
+`EPERM` indicates that an operation is not permitted (at least without providing authentication data).
 
-`info` indicates if the action requires authentication (`!= 0`) or if the action will always fail (`== 0`).
+`info` indicates if the action requires authentication (`info != 0`) or if the action will always fail (`info == 0`).
 
 
 ==== EACCES
 `EACCES` indicates an authentication error. `info` indicates the amount of retries left; if there is no retry-limit,
 `info` is `UINT64_MAX`.
+
+
+==== ENOBUF
+`ENOBUF` indicates insufficient buffer space – this happens if the allocated space is insufficient and the
+`reallocate`-callback is `NULL`. `info` indicates the required size.
 
 
 ==== EIO
@@ -261,10 +229,6 @@ typedef struct {
 ==== ETIMEDOUT
 `ETIMEDOUT` indicates that the operation timed out – either because it hit the 90s deadline or because something else
 timed out (e.g. hardware token). `info` is unused.
-
-
-==== EINVAL
-`EINVAL` indicates that an API misuse occurred. `info` is the `0`-based index of the invalid argument.
 
 
 ==== EOTHER

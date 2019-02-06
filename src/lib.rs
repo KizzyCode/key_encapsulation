@@ -1,75 +1,78 @@
 //! This crate is an implementation of the Kync specification (see "Kync.asciidoc")
 
-
-/// Checks if `$condition` evaluates to `true` and returns `$error` if this is not the case
-macro_rules! check {
-	($condition:expr, $error:expr) => (if !$condition {
-		return Err(::std::convert::From::from($error))
-	});
-}
-// Import `asn1_der` explicitly to support the derive macro
-#[macro_use] extern crate asn1_der;
-
-
 mod ffi;
 mod plugin;
-mod capsule;
-mod pool;
 
-use ::{ asn1_der::Asn1DerError, std::io::{ Error as IoError, ErrorKind as IoErrorKind } };
-pub use self::{ capsule::Capsule, pool::Pool };
+use std::{
+	error::Error as StdError,
+	fmt::{ Display, Formatter, Result as FmtResult },
+	io::{ Error as IoError, ErrorKind as IoErrorKind }
+};
+pub use crate::{ plugin::{ Plugin, FormatUid }, ffi::{ CSlice, AsCSlice, AsCSliceMut } };
 
 
-/// A plugin error
+/// The error kind
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
-pub enum PluginErrorType {
-	/// The library could not be initialized
-	EInit,
-	///
-	EPerm{ requires_authentication: bool },
-	/// An authentication error occurred (e.g. bad PIN, password etc.)
-	EAccess{ retries_left: Option<u64> },
-	/// An plugin internal I/O-error occurred
-	EIO,
-	/// Invalid data in key capsule
-	EIlSeq,
+pub enum ErrorKind {
+	/// A plugin could not initialize itself
+	InitializationError,
+	/// The provided buffer is too small and cannot be resized
+	BufferError{ required_size: usize },
+	/// An operation is not permitted (at least not without providing authentication data)
+	PermissionDenied{ requires_authentication: bool },
+	/// An authentication error occurred (e.g. bad PIN, password etc.); if the amount of retries
+	/// left is `None`, this means that there is no limit
+	AccessDenied{ retries_left: Option<u64> },
+	/// An IO-error occurred
+	IoError,
+	/// Invalid data
+	InvalidData,
 	/// There is no valid key available to decrypt the data
-	ENoKey,
+	NoKeyAvailable,
 	/// The operation was canceled by the user
-	ECancelled,
+	OperationCancelled,
 	/// The operation timed out (e.g. took longer than 90s)
-	ETimedOut,
-	/// A plugin-related API error
-	EInval{ argument_index: u64 },
-	/// Another (plugin specific) error occurred
-	EOther{ code: u64 }
+	OperationTimedOut,
+	/// An unspecified plugin error occurred
+	OtherPluginError{ errno: u64 },
+	/// The operation is unsupported
+	Unsupported
 }
 
 
-/// The crate's error type
+/// An error
 #[derive(Debug, Clone, Eq, PartialEq)]
-pub enum Error {
-	/// A plugin error occurred
-	PluginError{ file: String, line: u32, description: String, error_type: PluginErrorType },
-	/// A library related I/O-error occurred
-	IoError(IoErrorKind),
-	/// An invalid API-call was made (e.g. an invalid capsule format or capsule key ID was provided)
-	ApiMisuse,
-	/// Something is unsupported (e.g. the plugin's API version or the capsule format)
-	Unsupported
+pub struct Error {
+	/// The error kind
+	pub kind: ErrorKind,
+	/// An description of the error
+	pub desc: Option<String>
+}
+impl Display for Error {
+	fn fmt(&self, f: &mut Formatter) -> FmtResult {
+		write!(f, "{:?}", &self.kind)?;
+		if let Some(desc) = self.desc.as_ref() { write!(f, " ({:#?})", desc)?; }
+		Ok(())
+	}
+}
+impl From<ErrorKind> for Error {
+	fn from(kind: ErrorKind) -> Self {
+		Self{ kind, desc: None }
+	}
+}
+impl<T: ToString> From<(ErrorKind, T)> for Error {
+	fn from(kind_desc: (ErrorKind, T)) -> Self {
+		Self{ kind: kind_desc.0, desc: Some(kind_desc.1.to_string()) }
+	}
 }
 impl From<IoErrorKind> for Error {
 	fn from(io_error_kind: IoErrorKind) -> Self {
-		Error::IoError(io_error_kind)
+		Self{ kind: ErrorKind::IoError, desc: Some(format!("{:#?}", io_error_kind)) }
 	}
 }
 impl From<IoError> for Error {
 	fn from(io_error: IoError) -> Self {
-		io_error.kind().into()
+		Self{ kind: ErrorKind::IoError, desc: Some(format!("{}", io_error)) }
 	}
 }
-impl From<Asn1DerError> for Error {
-	fn from(_: Asn1DerError) -> Self {
-		Error::IoError(IoErrorKind::InvalidData)
-	}
-}
+impl StdError for Error {}
