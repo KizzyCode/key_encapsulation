@@ -1,15 +1,19 @@
 [package]
 name = "kync"
+edition = "2018"
 version = "0.1.0"
 authors = ["KizzyCode <development@kizzycode.de>"]
-edition = "2018"
+description = "A Rust interface to KyNc – a generic API for key encapsulation"
+categories = ["cryptography", "api-bindings"]
+keywords = ["kync", "cryptography", "key-wrapping", "key-encapsulation"]
+license = "BSD-2-Clause OR MIT"
+repository = "https://github.com/KizzyCode/kync"
+readme = "README.md"
 
 
-[dependencies]
-libloading = "0.5.0"
-
-[dev-dependencies]
-test_plugin = { path = "./test_plugin" }
+[badges]
+travis-ci = { repository = "KizzyCode/kync" }
+appveyor = { repository = "KizzyCode/kync" }
 
 
 [profile.release]
@@ -17,3 +21,10 @@ overflow-checks = true
 
 [profile.bench]
 overflow-checks = true
+
+
+[dependencies]
+libloading = "0.5.0"
+
+[dev-dependencies]
+test_plugin = { path = "./test_plugin" }
