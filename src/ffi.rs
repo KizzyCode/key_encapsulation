@@ -1,4 +1,4 @@
-use crate::{ Error, ErrorKind };
+use crate::{KyncError, ErrorKind };
 use std::{ marker::PhantomData, slice, usize, u64, cmp::min, ptr, os::raw::c_void };
 
 
@@ -144,7 +144,7 @@ pub struct CError {
 }
 impl CError {
 	/// Checks if the `CError` is an error and converts it accordingly
-	pub fn check(self) -> Result<(), Error> {
+	pub fn check(self) -> Result<(), KyncError> {
 		// Match the error type
 		let kind = match self.type_id {
 			errno::ENONE => return Ok(()),
@@ -173,7 +173,7 @@ impl CError {
 		};
 		
 		// Convert strings
-		Err(Error {
+		Err(KyncError {
 			kind, desc: Some(format!(
 				"Plugin error: {} @{}:{}",
 				String::from_c_str(&self.description),

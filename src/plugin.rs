@@ -1,4 +1,4 @@
-use crate::{ Error, ffi::{ CSlice, AsCSlice, AsCSliceMut, CError } };
+use crate::{KyncError, ffi::{ CSlice, AsCSlice, AsCSliceMut, CError } };
 use std::{ ptr, path::Path, fmt::{ Formatter, Debug, Result as FmtResult } };
 use libloading::Library;
 
@@ -45,7 +45,7 @@ pub struct Plugin {
 }
 impl Plugin {
 	/// Load the library
-	pub fn load(path: impl AsRef<Path>) -> Result<Self, Error> {
+	pub fn load(path: impl AsRef<Path>) -> Result<Self, KyncError> {
 		// Determine the log-level
 		let log_level = match cfg!(debug_assertions) {
 			true => 1u8,
@@ -88,7 +88,7 @@ impl Plugin {
 	}
 	
 	/// The available capsule keys
-	pub fn capsule_key_ids(&self, mut buf: impl AsCSliceMut) -> Result<usize, Error> {
+	pub fn capsule_key_ids(&self, mut buf: impl AsCSliceMut) -> Result<usize, KyncError> {
 		let mut buf = buf.c_slice();
 		unsafe{ (self.capsule_key_ids)(&mut buf) }.check()?;
 		Ok(buf.len())
@@ -97,7 +97,7 @@ impl Plugin {
 	/// Seals a key into `der_payload` and returns the `der_payload` length
 	pub fn seal(&self, mut buf: impl AsCSliceMut, key_to_seal: impl AsCSlice,
 		capsule_key_id: Option<impl AsCSlice>, user_secret: Option<impl AsCSlice>)
-		-> Result<usize, Error>
+		-> Result<usize, KyncError>
 	{
 		// Create buffer and readers
 		let mut buf = buf.c_slice();
@@ -123,7 +123,7 @@ impl Plugin {
 	
 	/// Opens the capsule into `key` and returns the `key` length
 	pub fn open(&self, mut buf: impl AsCSliceMut, payload: impl AsCSlice,
-		user_secret: Option<impl AsCSlice>) -> Result<usize, Error>
+		user_secret: Option<impl AsCSlice>) -> Result<usize, KyncError>
 	{
 		// Create `slice_t`s
 		let mut buf = buf.c_slice();

@@ -42,37 +42,37 @@ pub enum ErrorKind {
 
 /// An error
 #[derive(Debug, Clone, Eq, PartialEq)]
-pub struct Error {
+pub struct KyncError {
 	/// The error kind
 	pub kind: ErrorKind,
 	/// An description of the error
 	pub desc: Option<String>
 }
-impl Display for Error {
+impl Display for KyncError {
 	fn fmt(&self, f: &mut Formatter) -> FmtResult {
 		write!(f, "{:?}", &self.kind)?;
 		if let Some(desc) = self.desc.as_ref() { write!(f, " ({:#?})", desc)?; }
 		Ok(())
 	}
 }
-impl From<ErrorKind> for Error {
+impl From<ErrorKind> for KyncError {
 	fn from(kind: ErrorKind) -> Self {
 		Self{ kind, desc: None }
 	}
 }
-impl<T: ToString> From<(ErrorKind, T)> for Error {
+impl<T: ToString> From<(ErrorKind, T)> for KyncError {
 	fn from(kind_desc: (ErrorKind, T)) -> Self {
 		Self{ kind: kind_desc.0, desc: Some(kind_desc.1.to_string()) }
 	}
 }
-impl From<IoErrorKind> for Error {
+impl From<IoErrorKind> for KyncError {
 	fn from(io_error_kind: IoErrorKind) -> Self {
 		Self{ kind: ErrorKind::IoError, desc: Some(format!("{:#?}", io_error_kind)) }
 	}
 }
-impl From<IoError> for Error {
+impl From<IoError> for KyncError {
 	fn from(io_error: IoError) -> Self {
 		Self{ kind: ErrorKind::IoError, desc: Some(format!("{}", io_error)) }
 	}
 }
-impl StdError for Error {}
+impl StdError for KyncError {}
