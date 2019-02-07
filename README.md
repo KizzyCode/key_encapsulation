@@ -23,4 +23,4 @@ This library and standard are alpha and neither audited nor frozen. Use at your 
 
 
 ## Known plugins that implement KyNc
-. Currently none – but I'm working on a GnuPG plugin to utilize my Yubikey 🙃
+ - Currently none – but I'm working on a GnuPG plugin to utilize my Yubikey 🙃
