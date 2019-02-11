@@ -10,6 +10,20 @@ const API_VERSION: u8 = 1;
 /// A wrapper around the `64`-byte format UID
 #[derive(Copy, Clone)]
 pub struct FormatUid(pub [u8; 64]);
+impl FormatUid {
+	/// Creates a new `FormatUid` from a slice
+	///
+	/// _Warning: This function panics if `data.len() != 64`_
+	pub fn new(data: &[u8]) -> Self {
+		// Validate the length
+		assert_eq!(data.len(), 64);
+		
+		// Create the format UID
+		let mut format_uid = [0u8; 64];
+		format_uid.copy_from_slice(data);
+		FormatUid(format_uid)
+	}
+}
 impl PartialEq for FormatUid {
 	fn eq(&self, other: &Self) -> bool {
 		self.0.as_ref() == other.0.as_ref()
