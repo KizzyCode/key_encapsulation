@@ -1,184 +1,156 @@
-use crate::{KyncError, ErrorKind };
-use std::{ marker::PhantomData, slice, usize, u64, cmp::min, ptr, os::raw::c_void };
+use crate::{ KyncError, ErrorKind };
+use std::{ ptr, slice, usize, u64, marker::PhantomData, os::raw::{ c_char, c_void } };
+
+
+/// A `source_t` implementation
+#[repr(C)]
+pub struct CSource<'a> {
+	data: unsafe extern "C" fn(handle: *mut c_void, len: *mut usize) -> *const u8,
+	handle: *mut c_void,
+	_lifetime: PhantomData<&'a[u8]>
+}
+/// A trait for creating a `CSource` over an element
+pub trait AsCSource<'a> {
+	/// Returns a `CSource` over `self`
+	fn as_c_source(&'a self) -> CSource<'a>;
+}
+impl<'a> AsCSource<'a> for &'a[u8] {
+	fn as_c_source(&self) -> CSource {
+		// Type-specific `data` implementation
+		unsafe extern "C" fn data(handle: *mut c_void, len: *mut usize) -> *const u8
+		{
+			// Cast handle to `T` and then to `&[u8]`
+			let handle = (handle as *const &[u8]).as_ref().unwrap();
+			
+			// Adjust `len` and return the pointer over `handle`
+			*len.as_mut().unwrap() = handle.len();
+			handle.as_ptr()
+		}
+		
+		CSource{ data, handle: self as *const &[u8] as *mut c_void, _lifetime: PhantomData }
+	}
+}
+impl<'a> AsCSource<'a> for Option<&'a[u8]> {
+	fn as_c_source(&self) -> CSource {
+		// None-specific `data` implementation
+		unsafe extern "C" fn data_none(_handle: *mut c_void, _len: *mut usize) -> *const u8 {
+			ptr::null()
+		}
+		
+		// Check if we have a slice or not
+		match self {
+			Some(slice) => slice.as_c_source(),
+			None => CSource{ data: data_none, handle: ptr::null_mut(), _lifetime: PhantomData }
+		}
+	}
+}
+
+
+/// A `sink_t` implementation
+#[repr(C)]
+pub struct CSink<'a> {
+	data: unsafe extern "C" fn(handle: *mut c_void, len: usize) -> *mut u8,
+	handle: *mut c_void,
+	_lifetime: PhantomData<&'a mut Vec<u8>>
+}
+/// A trait for creating a `CSink` with an element
+pub trait AsCSink {
+	/// Creates a `CSink` with `self` as backing
+	fn as_c_sink(&mut self) -> CSink;
+}
+impl AsCSink for Vec<u8> {
+	fn as_c_sink(&mut self) -> CSink {
+		// `data` implementation
+		unsafe extern "C" fn data(handle: *mut c_void, len: usize) -> *mut u8 {
+			// Cast handle to the vector
+			let handle = (handle as *mut Vec<u8>).as_mut().unwrap();
+			
+			// Resize handle and return the pointer over the appended data
+			let offset = handle.len();
+			handle.resize(offset + len, 0);
+			handle.as_mut_ptr().add(offset)
+		}
+		
+		CSink{ data, handle: self as *mut Vec<u8> as *mut c_void, _lifetime: PhantomData }
+	}
+}
 
 
 /// Creates a string from a C-string
-pub trait FromCStr {
-	/// Creates a string from `c_str`; if `c_str` is not null-terminated, the entire slice is
-	/// converted to a string
+pub trait FromCStr: Sized {
+	/// Creates a string from a `c_str`; reads until either a `'\0`-byte is found or `limit` is
+	/// reached and returns the String or `None` if `c_str` is `NULL`.
 	///
 	/// _Note: This function panics if the string is not UTF-8_
-	fn from_c_str(c_str: &[u8]) -> Self;
+	unsafe fn from_c_str_limit<T>(c_str: *const T, limit: usize) -> Option<Self>;
+	
+	/// Creates a string from a `c_str`; reads until a `'\0`-byte is found and returns the String or
+	/// `None` if `c_str` is `NULL`.
+	///
+	/// _Note: This function panics if the string is not UTF-8_
+	unsafe fn from_c_str<T>(c_str: *const T) -> Option<Self> {
+		Self::from_c_str_limit(c_str, usize::MAX)
+	}
 }
 impl FromCStr for String {
-	fn from_c_str(c_str: &[u8]) -> Self {
-		// Find first zero byte
-		let len = c_str.iter()
-			.position(|b| *b == 0x00)
-			.unwrap_or(c_str.len());
+	unsafe fn from_c_str_limit<T>(c_str: *const T, limit: usize) -> Option<Self> {
+		// Cast pointer
+		let c_str = match c_str.is_null() {
+			true => return None,
+			false => c_str as *const u8
+		};
 		
-		// Convert the bytes to a string
-		String::from_utf8(c_str[..len].to_vec()).expect("Plugin API violation")
-	}
-}
-
-
-/// A trait for types that are convertible to a `CSlice<*const u8>`
-pub trait AsCSlice {
-	fn c_slice<'a>(&'a self) -> CSlice<'a, *const u8>;
-}
-/// A trait for types that are convertible to a `CSlice<*mut u8>`
-pub trait AsCSliceMut {
-	fn c_slice<'a>(&'a mut self) -> CSlice<'a, *mut u8>;
-}
-
-
-/// A `slice_t` implementation
-///
-/// This type is a C-ffi compatible struct over a slice, mutable slice or a mutable vector
-///
-/// _Warning: If the `CSlice` is passed as a mutable pointer, the `len`-field may get adjusted so
-/// that the underlying backing may be larger than the amount of meaningful bytes in `self`. To only
-/// get the payload, either use `slice()` or get the payload's length using `len()`._
-#[repr(C)]
-pub struct CSlice<'a, T> {
-	data: T,
-	capacity: usize,
-	len: usize,
-	
-	handle: *mut c_void,
-	reallocate: Option<unsafe extern "C" fn(*mut Self, usize)>,
-	_lifetime: PhantomData<&'a mut ()>
-}
-impl<'a> CSlice<'a, *mut u8> {
-	/// The length of the meaningful bytes
-	pub fn len(&self) -> usize {
-		self.len
-	}
-	/// The payload as slice
-	pub fn slice(&self) -> &[u8] {
-		unsafe{ slice::from_raw_parts(self.data, self.len) }
-	}
-}
-impl AsCSlice for &[u8] {
-	fn c_slice<'a>(&'a self) -> CSlice<'a, *const u8> {
-		CSlice {
-			data: self.as_ptr(),
-			capacity: self.len(),
-			len: self.len(),
-			
-			handle: ptr::null_mut(),
-			reallocate: None,
-			_lifetime: PhantomData
-		}
-	}
-}
-impl AsCSliceMut for &mut[u8] {
-	fn c_slice<'a>(&'a mut self) -> CSlice<'a, *mut u8> {
-		CSlice {
-			data: self.as_mut_ptr(),
-			capacity: self.len(),
-			len: self.len(),
-			
-			handle: ptr::null_mut(),
-			reallocate: None,
-			_lifetime: PhantomData
-		}
-	}
-}
-impl AsCSliceMut for &mut Vec<u8> {
-	fn c_slice<'a>(&'a mut self) -> CSlice<'a, *mut u8> {
-		/// The reallocation function for a vector
-		unsafe extern "C" fn reallocate(slice: *mut CSlice<*mut u8>, new_size: usize) {
-			// Extract pointers
-			let slice = slice.as_mut().unwrap();
-			let vec = (slice.handle as *mut Vec<u8>).as_mut().unwrap();
-			
-			// Resize vec and readjust slice fields
-			vec.resize(new_size, 0);
-			slice.data = vec.as_mut_ptr();
-			slice.capacity = vec.len();
-			slice.len = min(slice.len, vec.len())
-		}
+		// Determine the string length
+		let mut len = 0usize;
+		while c_str.add(len).read() != 0x00 && len < limit { len += 1 }
 		
-		// Create the `CSlice`
-		CSlice {
-			data: self.as_mut_ptr(),
-			capacity: self.len(),
-			len: self.len(),
-			
-			handle: (*self as *mut Vec<u8>) as *mut c_void,
-			reallocate: Some(reallocate),
-			_lifetime: PhantomData
-		}
+		// Create vector and string
+		let c_str = slice::from_raw_parts(c_str, len).to_vec();
+		Some(String::from_utf8(c_str).unwrap())
 	}
-}
-
-
-/// Defines the error "numbers"
-mod errno {
-	pub const ENONE: [u8; 16] = *b"ENONE\0\0\0\0\0\0\0\0\0\0\0";
-	pub const EINIT: [u8; 16] = *b"EINIT\0\0\0\0\0\0\0\0\0\0\0";
-	pub const ENOBUF: [u8; 16] = *b"ENOBUF\0\0\0\0\0\0\0\0\0\0";
-	pub const EPERM: [u8; 16] = *b"EPERM\0\0\0\0\0\0\0\0\0\0\0";
-	pub const EACCESS: [u8; 16] = *b"EACCESS\0\0\0\0\0\0\0\0\0";
-	pub const EIO: [u8; 16] = *b"EIO\0\0\0\0\0\0\0\0\0\0\0\0\0";
-	pub const EILSEQ: [u8; 16] = *b"EILSEQ\0\0\0\0\0\0\0\0\0\0";
-	pub const ENOKEY: [u8; 16] = *b"ENOKEY\0\0\0\0\0\0\0\0\0\0";
-	pub const ECANCELED: [u8; 16] = *b"ECANCELED\0\0\0\0\0\0\0";
-	pub const ETIMEDOUT: [u8; 16] = *b"ETIMEDOUT\0\0\0\0\0\0\0";
-	pub const EOTHER: [u8; 16] = *b"EOTHER\0\0\0\0\0\0\0\0\0\0";
 }
 
 
 /// An `error_t` implementation
 #[repr(C)] #[derive(Copy, Clone)]
 pub struct CError {
-	pub type_id: [u8; 16],
-	
-	pub file: [u8; 256],
-	pub line: u32,
-	pub description: [u8; 1024],
-	
-	pub info: u64
+	error_type: *const c_char,
+	description: *const c_char,
+	info: u64
 }
 impl CError {
 	/// Checks if the `CError` is an error and converts it accordingly
 	pub fn check(self) -> Result<(), KyncError> {
+		// Check if there is an error and if so convert the error type to a string
+		let error_type = match unsafe{ String::from_c_str(self.error_type) } {
+			Some(error_type) => error_type,
+			None => return Ok(())
+		};
+		
 		// Match the error type
-		let kind = match self.type_id {
-			errno::ENONE => return Ok(()),
-			
-			errno::EINIT => ErrorKind::InitializationError,
-			errno::ENOBUF => ErrorKind::BufferError {
-				required_size: match self.info {
-					s if s < usize::MAX as u64 => s as usize,
-					_ => panic!("Plugin API violation")
-				}
-			},
-			errno::EPERM => ErrorKind::PermissionDenied{ requires_authentication: self.info != 0 },
-			errno::EACCESS => ErrorKind::AccessDenied {
+		let kind = match error_type.as_str() {
+			"EPERM" => ErrorKind::PermissionDenied{ requires_authentication: self.info != 0 },
+			"EACCESS" => ErrorKind::AccessDenied {
 				retries_left: match self.info {
 					u64::MAX => None,
 					retries_left => Some(retries_left)
 				}
 			},
-			errno::EIO => ErrorKind::IoError,
-			errno::EILSEQ => ErrorKind::InvalidData,
-			errno::ENOKEY => ErrorKind::NoKeyAvailable,
-			errno::ECANCELED => ErrorKind::OperationCancelled,
-			errno::ETIMEDOUT => ErrorKind::OperationTimedOut,
-			errno::EOTHER => ErrorKind::OtherPluginError{ errno: self.info },
-			_ => panic!("Plugin API violation")
+			"ENOBUF" => ErrorKind::BufferError { required_size: self.info },
+			"EIO" => ErrorKind::IoError,
+			"EILSEQ" => ErrorKind::InvalidData,
+			"ENOKEY" => ErrorKind::NoKeyAvailable,
+			"EINVAL" => ErrorKind::InvalidParameter{ index: self.info },
+			"ECANCELED" => ErrorKind::OperationCancelled,
+			"ETIMEDOUT" => ErrorKind::OperationTimedOut,
+			"EOTHER" => ErrorKind::OtherPluginError{ errno: self.info },
+			_ => unreachable!("Invalid error type")
 		};
 		
 		// Convert strings
 		Err(KyncError {
-			kind, desc: Some(format!(
-				"Plugin error: {} @{}:{}",
-				String::from_c_str(&self.description),
-				String::from_c_str(&self.file), self.line
-			))
+			kind,
+			desc: unsafe{ String::from_c_str(self.description) }
 		})
 	}
 }

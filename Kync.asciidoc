@@ -26,211 +26,196 @@ These general rules apply to all API functions and *MUST* be respected by any pl
 === API Overview
 These functions are defined by the API and *MUST* be implemented:
 
-. `init`: Takes care of the library initialization and API version validation
+. `source_t` and `sink_t`: The data source/sink types
+. `init`: Takes care of the library initialization and returns the implemented API version
 . `capsule_format_uid`: Returns the capsule format UID for the implemented format
 . `capsule_key_ids`: Gets all available capsule key IDs (for plugins that have their own key storage; e.g. GnuPG)
 . `seal`: Seals some key bytes into a capsule
 . `open`: Extracts the key bytes from a capsule
+. `error_t`: The error type
 
 
-==== init
-[source,cpp]
-----
-error_t init(uint8_t api_version, uint8_t logging_level);
-----
-
-This function initializes the library and returns an `error_t` to check if the initialization failed.
-
-Parameters:
-
-. `api_version`: The API version _expected by the caller_. The plugin *MUST* validate the expected version and return an
-  error if it does not implement it. The API version defined by this document is `1`.
-. `logging_level`: The logging level the plugin should use (`0` means no logging). _Note: This only applies to StdErr_
-
-
-==== capsule_format_uid
-[source,cpp]
-----
-uint8_t[64] capsule_format_uid();
-----
-
-This function returns the plugin's capsule format UID. It *MUST NOT* fail.
-
-The capsule format UID is a 64 byte UTF-8 format UID – this format-UID *MUST* map to one format only. To achieve this,
-we append a random UUID; e.g. `AES-256-GCM-IETF.v1________.B593CCDE-B5C3-433A-ABBA-9087FBF13E60`. If you write a fully
-compatible drop-in replacement for an already existing plugin, you *MAY* use the original format UID.
-
-
-==== capsule_key_ids
-[source,cpp]
-----
-error_t capsule_key_ids(slice_t* id_buffer);
-----
-
-This function writes all available capsule key IDs into `id_buffer`. This function is useful if the plugin offers it's
-own key store that you can/must use (e.g. GnuPG).
-
-The IDs are `uint8_t[256]`-arrays, which are just concatenated and written to `id_buffer`. If an ID is shorter than 256
-bytes, it *MUST* be `'\0'`-padded. The ID must be an UTF-8 string.
-
-Parameter `id_buffer`: The buffer into which the IDs are written.
-
-
-==== seal
-[source,cpp]
-----
-error_t seal(slice_t* dest, slice_t const* key_to_seal, slice_t const* capsule_key_id, slice_t const* user_secret);
-----
-
-This function seals the key bytes in `key_to_seal` and writes the resulting data to `dest`.
-
-Parameters:
-
-. `dest`: The payload destination
-. `key_to_seal`: The slice containing the key bytes to seal
-. `capsule_key_id`: The capsule key ID to use (see `capsule_key_ids`). This parameter *MAY* be `NULL` if it's not
-  necessary for the call.
-. `user_secret`: A user-provided secret. This parameter may have multiple, plugin-dependent purposes; ranging from a
-   hardware-token-PIN to the capsule key itself. It *MAY* be `NULL` if it's not necessary for the call – however _if_ it
-   is `NULL`, a plugin *MUST NOT* perform any authentication attempts that could decrease a retry counter.
-
-
-==== open
-[source,cpp]
-----
-error_t open(slice_t* dest, slice_t const* payload, slice_t const* user_secret);
-----
-
-This function opens a key capsule and writes the resulting key bytes into `dest`.
-
-Parameters:
-
-. `dest`: The plaintext-key destination
-. `payload`: The capsule payload
-. `user_secret`: A user-provided secret. This parameter may have multiple, plugin-dependent purposes; ranging from a
-  hardware-token-PIN to the capsule key itself. It *MAY* be `NULL` if it's not necessary for the call – however _if_ it
-  is `NULL`, a plugin *MUST NOT* perform any authentication attempts that could decrease a retry counter.
-
-
-==== slice_t
+=== source_t
 [source,cpp]
 ----
 typedef struct {
-	uint8_t* data;
-	size_t capacity;
-	size_t len;
-
+	uint8_t const* data(void* handle, size_t* len);
 	void* handle;
-	void (*reallocate)(slice_t* slice, size_t new_size);
-} slice_t;
+} source_t;
 ----
 
-A slice is a struct that holds all components to represent a vector-type. The advantage of this pattern (in comparison
-to a simple `ptr,len`-pattern) is, that it allows dynamic memory reallocation from within the plugin.
+A simple, callback based data-source.
+
+_Important: If `data` returns `NULL`, this means the source is unavailable – which *MUST NOT* be confused with an empty
+source!_
 
 Fields:
 
-. `data`: A pointer to the allocated memory region
-. `len`: The amount of meaningful bytes at `data`
-. `capacity`: The amount of allocated memory
-. `handle`: A pointer to a handle (*MAY* handle)
-. `reallocate`: A callback to reallocate data (*MAY* be `NULL`) – if this function fails, it *MUST*
-  https://en.wikipedia.org/wiki/C_process_control#abort[abort] the application.
-
-Example:
-[source,cpp]
-----
-void reallocate(slice_t* slice, size_t new_size) {
-	auto vector = reinterpret_cast<std::vector<uint8_t>*>(slice->handle);
-	vector->resize(new_size);
-
-	slice->data = vector->data();
-	slice->capacity = new_size;
-	slice->len = std::min(slice->len, slice->capacity);
-}
-
-int main(int argc, const char** argv) {
-	// Create a buffer and a slice over it
-	std::vector<uint8_t> buf;
-	slice_t slice {
-		.data = buf.data(), .capacity = buf.capacity(), .len = buf.size(),
-		.handle = &buf, .reallocate = reallocate
-	};
-
-	// Do something with slice
-	do_sth_with_slice(&slice);
-
-	// Take length from slice and do something with the buffer
-	buf.resize(slice.len);
-	do_sth_with_buf(&buf);
-
-	return 0;
-}
-----
+. `data`: A function that returns the available bytes in `handle` and adjusts `len` accordingly. The returned pointer
+  *MAY* be `NULL` in case this source is not available (*MUST NOT* be confused with an empty source!). This function
+  *MAY* be called multiple times and *MUST* always return the same result.
+. `handle`: An opaque pointer to the data-source handle
 
 
-=== Errors
-Errors are defines as a constant error type-ID plus some additional type-dependent error information:
-
+=== sink_t
 [source,cpp]
 ----
 typedef struct {
-	uint8_t type_id[16]; // -> the error type as `\0`-padded string (e.g. "ENONE" or "EINIT")
+	uint8_t* data(void* handle, size_t len);
+	void* handle;
+} sink_t;
+----
 
-	uint8_t file[256];   // -> the file where the error occurred as `\0`-padded string (e.g. "main.c")
-	uint32_t line;       // -> the line where the error occurred
-	uint8_t description[1024];   // -> an error description as `\0`-padded string
+A simple, callback based data-sink.
 
-	uint64_t info;       // -> some type-dependent error info
+. `data`: A function that returns a pointer to a `len` sized memory-area within `handle` which can be written. If the
+  returned pointer is `NULL`, an `ENOBUF`-error *MUST* be returned. This function *MAY* be called multiple times to
+  allow partial writes; on successive calls it *MUST* return new a pointer to an empty (not already written) slice of
+  memory.
+. `handle`: An opaque pointer to the data-sink handle
+
+
+=== init
+[source,cpp]
+----
+uint8_t init(uint8_t log_level);
+----
+
+This function initializes the library, sets the `log_level` and returns the API version. It *MUST NOT* fail.
+
+Valid API versions are:
+
+. `0x01`: The API version for this specification
+
+Parameter `log_level`: The logging level the plugin should use (`0` means no logging). _Note: This only applies to
+StdErr-logging_
+
+
+=== capsule_format_uid
+[source,cpp]
+----
+uint8_t const* capsule_format_uid();
+----
+
+This function returns a const static pointer the plugin's capsule format UID. It *MUST NOT* fail or return `NULL`.
+
+The capsule format UID is a 64 byte UTF-8 UID. If the UID is shorter than 64 bytes, it *MUST* be `'\0'`-padded.
+
+The capsule format UID *MUST* map to one format only. To achieve this, we append a random UUID; e.g.
+`AES-256-GCM-IETF.v1.B593CCDE-B5C3-433A-ABBA-9087FBF13E60`. If you write a fully compatible drop-in replacement for an
+already existing plugin, you *MAY* use the original format UID.
+
+
+=== capsule_key_ids
+[source,cpp]
+----
+error_t capsule_key_ids(sink_t ids);
+----
+
+This function writes all available capsule key IDs as concatenated `uint8_t[256]`-arrays into `ids`. It is useful if the
+plugin offers it's own key store that you can/must use (e.g. GnuPG). If an ID is shorter than 256 bytes, it *MUST* be
+`'\0'`-padded. The ID must be an UTF-8 string.
+
+If the plugin does not support a key store, it *MUST* return an `ENOKEY`-error.
+
+
+=== seal
+[source,cpp]
+----
+error_t seal(sink_t sink, source_t key, source_t capsule_key_id, source_t user_secret);
+----
+
+This function seals a `key` and writes the resulting data to `sink`.
+
+Parameters:
+
+. `sink`: The payload destination
+. `key`: The slice containing the key bytes to seal
+. `capsule_key_id`: The capsule key ID to use (see `capsule_key_ids`); *MUST* be unavailable if it is not necessary for
+  the call – _if_ the plugin does not support a key store or the requested key is unavailable, it *MUST* return an
+  `ENOKEY`-error.
+. `user_secret`: A user-provided secret. This parameter may have multiple, plugin-dependent purposes; ranging from a
+  hardware-token-PIN to the capsule key itself. *MAY* be unavailable if it is not necessary for the call – _if_ it is
+  unavailable, a plugin *MUST NOT* perform any authentication attempts that could decrease a retry counter.
+
+
+=== open
+[source,cpp]
+----
+error_t open(sink_t sink, source_t capsule, source_t user_secret);
+----
+
+This function opens a `capsule` and writes the resulting key bytes into `sink`.
+
+Parameters:
+
+. `sink`: The plaintext-key destination
+. `capsule`: The capsule data
+. `user_secret`: A user-provided secret. This parameter may have multiple, plugin-dependent purposes; ranging from a
+  hardware-token-PIN to the capsule key itself. *MAY* be unavailable if it is not necessary for the call – _if_ it is
+  unavailable, a plugin *MUST NOT* perform any authentication attempts that could decrease a retry counter.
+
+
+=== error_t
+[source,cpp]
+----
+typedef struct {
+	char const* error_type;
+	char const* description;
+	uint64_t info;
 } error_t;
 ----
 
+The error type.
 
-==== ENONE
-`ENONE` is the placeholder if no error occurred. `info` is usually unused.
+Fields:
 
-
-==== EINIT
-`EINIT` indicates a fatal error during library initialization. `info` is unused.
+. `error_type`: The error type as `0`-terminated string or a `NULL`-pointer if no error occurred
+. `info`: An error-specific info field
+. `description`: An error description as `0`-terminated string; *MUST NOT* be `NULL`
 
 
 ==== EPERM
-`EPERM` indicates that an operation is not permitted (at least without providing authentication data).
+`"EPERM"` indicates that an operation is not permitted (at least without providing authentication data).
 
 `info` indicates if the action requires authentication (`info != 0`) or if the action will always fail (`info == 0`).
 
 
 ==== EACCES
-`EACCES` indicates an authentication error. `info` indicates the amount of retries left; if there is no retry-limit,
+`"EACCES"` indicates an authentication error. `info` indicates the amount of retries left; if there is no retry-limit,
 `info` is `UINT64_MAX`.
 
 
 ==== ENOBUF
-`ENOBUF` indicates insufficient buffer space – this happens if the allocated space is insufficient and the
-`reallocate`-callback is `NULL`. `info` indicates the required size.
+`"ENOBUF"` indicates insufficient buffer space – this happens if the `sink_t` store the provided data. `info` indicates
+the required size.
 
 
 ==== EIO
-`EIO` indicates an I/O-related error. `info` is unused.
+`"EIO"` indicates an I/O-related error. `info` is unused.
 
 
 ==== EILSEQ
-`EILSEQ` indicates invalid capsule data. `info` is unused.
+`"EILSEQ"` indicates invalid capsule data. `info` is unused.
 
 
 ==== ENOKEY
-`ENOKEY` indicates that there is no matching key available to decrypt the capsule. `info` is unused.
+`"ENOKEY"` indicates that there is no matching key available to decrypt the capsule. `info` is unused.
+
+
+==== EINVAL
+"`EINVAL`" indicates an invalid parameter. `info` is the `0`-based index of the parameter.
 
 
 ==== ECANCELED
-`ECANCELED` indicates that the operation was canceled. `info` is unused.
+`"ECANCELED"` indicates that the operation was canceled. `info` is unused.
 
 
 ==== ETIMEDOUT
-`ETIMEDOUT` indicates that the operation timed out – either because it hit the 90s deadline or because something else
+`"ETIMEDOUT"` indicates that the operation timed out – either because it hit the 90s deadline or because something else
 timed out (e.g. hardware token). `info` is unused.
 
 
 ==== EOTHER
-`EOTHER` indicates that an unspecified fatal error occurred. `info` *MAY* be a plugin-specific error code and *MUST* be
-ignored if it's meaning is unknown.
+`"EOTHER"` indicates that an unspecified fatal error occurred. `info` *MAY* be a plugin-specific error code and *MUST*
+be ignored if it's meaning is unknown.

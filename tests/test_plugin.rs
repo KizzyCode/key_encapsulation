@@ -1,29 +1,21 @@
-use kync::{ ErrorKind, Plugin };
+use kync::{ ErrorKind, Plugin, plugin::{ os_default_prefix, os_default_suffix } };
 use std::path::PathBuf;
 
 /// Load the test plugin
 fn load_plugin() -> Plugin {
-	// Create base path
-	let mut path = match cfg!(debug_assertions) {
-		true => PathBuf::from("target/debug/deps".to_string()),
-		false => PathBuf::from("target/release/deps".to_string())
-	};
-	
-	// Append library name
-	match true {
-		_ if cfg!(target_os = "windows") => path.push("kync_test_plugin.dll"),
-		_ if cfg!(target_os = "macos") => path.push("libkync_test_plugin.dylib"),
-		_ if cfg!(target_family = "unix") => path.push("libkync_test_plugin.so"),
-		_ => unimplemented!("Your current platform has no test yet")
-	};
+	// Create path
+	let mut path = PathBuf::new();
+	path.push("target");
+	path.push(if cfg!(debug_assertions) { "debug" } else { "release" });
+	path.push("deps");
+	path.push(format!("{}kync_test_plugin.{}", os_default_prefix(), os_default_suffix()));
 	
 	// Load plugin
 	Plugin::load(path).unwrap()
 }
 
 
-const CAPSULE_FORMAT_UID: &[u8] =
-	b"TestCapsuleFormat__________.3A0351A7-FE90-4383-9E68-FCC20033D5F1";
+const CAPSULE_FORMAT_UID: &str = "TestCapsuleFormat.3A0351A7-FE90-4383-9E68-FCC20033D5F1";
 const TEST_USER_SECRET: Option<&[u8]> = Some(b"Testolope");
 const KEY: &[u8] = b"2nwBK-EkfXW-yWSQv-Vkab3-USHvX-WNJxa-GeXFJ-ecsjJ-imnft";
 const PAYLOAD: &[u8] = b"tfnmi-Jjsce-JFXeG-axJNW-XvHSU-3bakV-vQSWy-WXfkE-KBwn2";

@@ -1,7 +1,7 @@
 [package]
 name = "kync"
 edition = "2018"
-version = "0.1.2"
+version = "0.1.3"
 authors = ["KizzyCode <development@kizzycode.de>"]
 description = "KyNc – a generic API for key encapsulation and a Rust interface to KyNc-plugins"
 categories = ["cryptography", "api-bindings"]
@@ -27,4 +27,4 @@ overflow-checks = true
 libloading = "0.5.0"
 
 [dev-dependencies]
-kync_test_plugin = { version = "0.1.0", path = "./kync_test_plugin" }
+kync_test_plugin = { version = "0.1.1", path = "./kync_test_plugin" }

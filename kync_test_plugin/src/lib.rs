@@ -1,83 +1,89 @@
 mod ffi;
-//use std::ptr::copy;
-use crate::ffi::{ CSlice, CError, errno::* };
+use crate::ffi::{ CSource, CSink, CError };
 
 
+const API_VERSION: u8 = 1;
 const TEST_USER_SECRET: &[u8] = b"Testolope";
-pub static FORMAT_UID: &[u8; 64] =
-	b"TestCapsuleFormat__________.3A0351A7-FE90-4383-9E68-FCC20033D5F1";
+static FORMAT_UID: &'static [u8; 64] =
+	b"TestCapsuleFormat.3A0351A7-FE90-4383-9E68-FCC20033D5F1\0\0\0\0\0\0\0\0\0\0";
 
 
+/// This function initializes the library, sets the log_level and returns the API version
 #[no_mangle]
-pub extern "C" fn init(api_version: u8, _log_level: u8) -> CError {
-	match api_version {
-		1 => ok!(),
-		_ => err!(EINIT, "Invalid API version", 0)
-	}
+pub extern "C" fn init(_log_level: u8) -> u8 {
+	API_VERSION
 }
 
+/// This function returns a const pointer the plugin’s capsule format UID
 #[no_mangle]
-pub extern "C" fn capsule_format_uid() -> [u8; 64] {
-	*FORMAT_UID
-}
-
-
-#[no_mangle]
-pub extern "C" fn capsule_key_ids(id_buffer: *mut CSlice) -> CError {
-	// Unwrap pointers
-	let _id_buffer = unsafe{ id_buffer.as_mut().unwrap() };
-	ok!()
+pub extern "C" fn capsule_format_uid() -> *const u8 {
+	FORMAT_UID.as_ptr()
 }
 
 
+/// This function writes all available capsule key IDs as concatenated `[u8; 256]`-arrays into `ids`
 #[no_mangle]
-pub extern "C" fn seal(payload: *mut CSlice, key: *const CSlice, _capsule_key_id: *const CSlice,
-	user_secret: *const CSlice) -> CError
-{
-	// Check pointer
-	let payload = unsafe{ payload.as_mut() }.unwrap();
-	let key = unsafe{ key.as_ref() }.unwrap().slice();
-	let user_secret = unsafe{ user_secret.as_ref() };
-	
-	// Check `user_secret` (note that this is inherently insecure and for demo-purposes only)
-	let user_secret = match user_secret {
-		Some(user_secret) => user_secret.slice(),
-		None => return err!(EPERM, "Authentication is required", 1)
-	};
-	if user_secret != TEST_USER_SECRET {
-		return err!(EACCESS, "Invalid authentication", u64::max_value())
-	}
-	
-	// "Encrypt" the key by reversing it and write it to `payload`
-	let key: Vec<u8> = key.iter().map(|b| *b).rev().collect();
-	match payload.write(&key) {
-		Ok(_) => ok!(),
-		Err(e) => e
-	}
+pub extern "C" fn capsule_key_ids(_ids: CSink) -> CError {
+	CError::enokey().desc(b"This plugin does not use a key store\0")
 }
 
+
+/// This function seals the key bytes in `key` and writes the resulting data to `sink`
 #[no_mangle]
-pub extern "C" fn open(key: *mut CSlice, payload: *const CSlice, user_secret: *const CSlice)
+pub extern "C" fn seal(mut sink: CSink, key: CSource, capsule_key_id: CSource, user_secret: CSource)
 	-> CError
 {
-	// Check pointer
-	let key = unsafe{ key.as_mut() }.unwrap();
-	let payload = unsafe{ payload.as_ref() }.unwrap().slice();
-	let user_secret = unsafe{ user_secret.as_ref() };
+	// Validate that we have NO capsule ID
+	if capsule_key_id.data().is_some() {
+		return CError::einval(2).desc(b"This plugin does not use a key store\0")
+	}
+	
+	// Check that we have a key
+	let key = match key.data() {
+		Some(key) => key,
+		None => return CError::einval(1).desc(b"The `key` is obligatory\0")
+	};
 	
 	// Check `user_secret` (note that this is inherently insecure and for demo-purposes only)
-	let user_secret = match user_secret {
-		Some(user_secret) => user_secret.slice(),
-		None => return err!(EPERM, "Authentication is required", 1)
-	};
-	if user_secret != TEST_USER_SECRET {
-		return err!(EACCESS, "Invalid authentication", u64::max_value())
+	match user_secret.data() {
+		Some(TEST_USER_SECRET) => (),
+		Some(_) => return CError::eacces(None).desc(b"Invalid secret\0"),
+		None => return CError::eperm(true).desc(b"Secret is required\0")
 	}
 	
-	// "Decrypt" the key by reversing it and write it to `key`
-	let payload: Vec<u8> = payload.iter().map(|b| *b).rev().collect();
-	match key.write(&payload) {
-		Ok(_) => ok!(),
-		Err(e) => e
+	// "Encrypt" the key by reversing it and write it to `sink`
+	match sink.data(key.len()) {
+		Some(sink) =>
+			key.iter().rev().enumerate().for_each(|(i, b)| sink[i] = *b),
+		None => return CError::enobuf(key.len() as u64)
+			.desc(b"Failed to write to sink\0")
+	};
+	CError::ok()
+}
+
+
+/// This function opens a key `capsule` and writes the resulting key bytes into `sink`
+#[no_mangle]
+pub extern "C" fn open(mut sink: CSink, capsule: CSource, user_secret: CSource) -> CError {
+	// Check that we have a capsule
+	let capsule = match capsule.data() {
+		Some(capsule) => capsule,
+		None => return CError::einval(1).desc(b"The `capsule` is obligatory\0")
+	};
+	
+	// Check `user_secret` (note that this is inherently insecure and for demo-purposes only)
+	match user_secret.data() {
+		Some(TEST_USER_SECRET) => (),
+		Some(_) => return CError::eacces(None).desc(b"Invalid secret\0"),
+		None => return CError::eperm(true).desc(b"Secret is required\0")
 	}
+	
+	// "Decrypt" the key by reversing it and write it to `sink`
+	match sink.data(capsule.len()) {
+		Some(sink) =>
+			capsule.iter().rev().enumerate().for_each(|(i, b)| sink[i] = *b),
+		None => return CError::enobuf(capsule.len() as u64)
+			.desc(b"Failed to write to sink\0")
+	};
+	CError::ok()
 }

@@ -1,58 +1,47 @@
-use crate::{KyncError, ffi::{ CSlice, AsCSlice, AsCSliceMut, CError } };
-use std::{ ptr, path::Path, fmt::{ Formatter, Debug, Result as FmtResult } };
+use crate::{ KyncError, CSource, AsCSource, CSink, AsCSink, ffi::{ CError, FromCStr } };
+use std::path::Path;
 use libloading::Library;
+use crate::ErrorKind;
 
 
 /// The current API version
 const API_VERSION: u8 = 1;
 
 
-/// A wrapper around the `64`-byte format UID
-#[derive(Copy, Clone)]
-pub struct FormatUid(pub [u8; 64]);
-impl FormatUid {
-	/// Creates a new `FormatUid` from a slice
-	///
-	/// _Warning: This function panics if `data.len() != 64`_
-	pub fn new(data: &[u8]) -> Self {
-		// Validate the length
-		assert_eq!(data.len(), 64);
-		
-		// Create the format UID
-		let mut format_uid = [0u8; 64];
-		format_uid.copy_from_slice(data);
-		FormatUid(format_uid)
+/// The current operating system's default dynamic library prefix (e.g. `"lib"` for Linux)
+#[cfg(any(target_os = "windows", target_family = "unix"))]
+pub fn os_default_prefix() -> &'static str {
+	match true {
+		_ if cfg!(target_os = "windows") => "",
+		_ if cfg!(target_family = "unix") => "lib",
+		_ => unreachable!()
 	}
 }
-impl PartialEq for FormatUid {
-	fn eq(&self, other: &Self) -> bool {
-		self.0.as_ref() == other.0.as_ref()
-	}
-}
-impl<T: AsRef<[u8]>> PartialEq<T> for FormatUid {
-	fn eq(&self, other: &T) -> bool {
-		self.0.as_ref() == other.as_ref()
-	}
-}
-impl Debug for FormatUid {
-	fn fmt(&self, f: &mut Formatter) -> FmtResult {
-		write!(f, "FormatUid({})", String::from_utf8_lossy(self.0.as_ref()))
+/// The current operating system's default dynamic library extension (e.g. `"so"` for Linux)
+#[cfg(any(target_os = "windows", target_family = "unix"))]
+pub fn os_default_suffix() -> &'static str {
+	match true {
+		_ if cfg!(target_os = "windows") => "dll",
+		_ if cfg!(target_os = "macos") => "dylib",
+		_ if cfg!(target_family = "unix") => "so",
+		_ => unreachable!()
 	}
 }
 
 
 /// A key capsule plugin (see "Kync.asciidoc" for further API documentation)
 pub struct Plugin {
-	capsule_format_uid: unsafe extern fn() -> [u8; 64],
+	capsule_format_uid: unsafe extern "C" fn() -> *const u8,
 	
-	capsule_key_ids: unsafe extern fn(id_buffer: *mut CSlice<*mut u8>) -> CError,
-	seal: unsafe extern fn(
-		payload: *mut CSlice<*mut u8>, key_to_seal: *const CSlice<*const u8>,
-		capsule_key_id: *const CSlice<*const u8>, user_secret: *const CSlice<*const u8>
+	capsule_key_ids: unsafe extern "C" fn(id_buffer: CSink) -> CError,
+	
+	seal: unsafe extern "C" fn(
+		sink: CSink, key: CSource,
+		capsule_key_id: CSource, user_secret: CSource
 	) -> CError,
-	open: unsafe extern fn(
-		key: *mut CSlice<*mut u8>, payload: *const CSlice<*const u8>,
-		user_secret: *const CSlice<*const u8>
+	open: unsafe extern "C" fn(
+		sink: CSink, capsule: CSource,
+		user_secret: CSource
 	) -> CError,
 	
 	_library: Library
@@ -77,12 +66,8 @@ impl Plugin {
 		let library = Library::new(path.as_ref())?;
 		
 		// Validate loaded library
-		unsafe {
-			// Initialize library and check the API version
-			let init =
-				*library.get::<unsafe extern fn(u8, u8) -> CError>(b"init\0")?;
-			init(API_VERSION, log_level).check()?;
-		}
+		let init: unsafe extern "C" fn(u8) -> u8 = *unsafe{ library.get(b"init\0")? };
+		if unsafe{ init(log_level) } != API_VERSION { Err(ErrorKind::Unsupported)? }
 		
 		// Create plugin
 		Ok(Self {
@@ -97,61 +82,45 @@ impl Plugin {
 	}
 	
 	/// The capsule format UID
-	pub fn capsule_format_uid(&self) -> FormatUid {
-		FormatUid(unsafe{ (self.capsule_format_uid)() })
+	pub fn capsule_format_uid(&self) -> String {
+		unsafe{ String::from_c_str_limit((self.capsule_format_uid)(), 64) }.unwrap()
 	}
 	
 	/// The available capsule keys
-	pub fn capsule_key_ids(&self, mut buf: impl AsCSliceMut) -> Result<usize, KyncError> {
-		let mut buf = buf.c_slice();
-		unsafe{ (self.capsule_key_ids)(&mut buf) }.check()?;
-		Ok(buf.len())
+	pub fn capsule_key_ids(&self) -> Result<Vec<String>, KyncError> {
+		// Collect all key UIDs
+		let mut buf = Vec::new();
+		unsafe{ (self.capsule_key_ids)(buf.as_c_sink()) }.check()?;
+		assert_eq!(buf.len() % 256, 0);
+		
+		// Parse all key UIDs
+		let uids = buf.chunks(256)
+			.map(|uid| unsafe{ String::from_c_str_limit(uid.as_ptr(), 256) })
+			.map(|s| s.unwrap())
+			.collect();
+		
+		Ok(uids)
 	}
 	
-	/// Seals a key into `der_payload` and returns the `der_payload` length
-	pub fn seal(&self, mut buf: impl AsCSliceMut, key_to_seal: impl AsCSlice,
-		capsule_key_id: Option<impl AsCSlice>, user_secret: Option<impl AsCSlice>)
+	/// Seals a key into `buf` and returns the amount of bytes written
+	pub fn seal(&self, buf: &mut Vec<u8>, key: &[u8],
+		capsule_key_id: Option<&[u8]>, user_secret: Option<&[u8]>)
 		-> Result<usize, KyncError>
 	{
-		// Create buffer and readers
-		let mut buf = buf.c_slice();
-		
-		let mut capsule_key_id =
-			capsule_key_id.as_ref().map(|i| i.c_slice());
-		let mut user_secret =
-			user_secret.as_ref().map(|s| s.c_slice());
-		
-		// Map optionals to pointers
-		let capsule_key_id=
-			capsule_key_id.as_mut().map(|i| i as _)
-				.unwrap_or(ptr::null_mut());
-		let user_secret =
-			user_secret.as_mut().map(|s| s as _)
-				.unwrap_or(ptr::null_mut());
-		
-		// Call function
-		unsafe{ (self.seal)(&mut buf, &key_to_seal.c_slice(), capsule_key_id, user_secret) }
-			.check()?;
+		unsafe{ (self.seal)(
+			buf.as_c_sink(), key.as_c_source(),
+			capsule_key_id.as_c_source(), user_secret.as_c_source()
+		) }.check()?;
 		Ok(buf.len())
 	}
 	
-	/// Opens the capsule into `key` and returns the `key` length
-	pub fn open(&self, mut buf: impl AsCSliceMut, payload: impl AsCSlice,
-		user_secret: Option<impl AsCSlice>) -> Result<usize, KyncError>
+	/// Opens the `capsule` into `buf` and returns the amount of bytes written
+	pub fn open(&self, buf: &mut Vec<u8>, capsule: &[u8], user_secret: Option<&[u8]>)
+		-> Result<usize, KyncError>
 	{
-		// Create `slice_t`s
-		let mut buf = buf.c_slice();
-		
-		let mut user_secret =
-			user_secret.as_ref().map(|s| s.c_slice());
-		
-		// Map optionals to pointers
-		let user_secret =
-			user_secret.as_mut().map(|s| s as _)
-				.unwrap_or(ptr::null_mut());
-		
 		// Call function
-		unsafe{ (self.open)(&mut buf, &payload.c_slice(), user_secret) }.check()?;
+		unsafe{ (self.open)(buf.as_c_sink(), capsule.as_c_source(), user_secret.as_c_source()) }
+			.check()?;
 		Ok(buf.len())
 	}
 }
