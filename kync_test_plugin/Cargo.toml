@@ -1,7 +1,7 @@
 [package]
 name = "kync_test_plugin"
 edition = "2018"
-version = "0.1.1"
+version = "0.1.2"
 authors = ["KizzyCode <development@kizzycode.de>"]
 description = "A test plugin for kync"
 license = "BSD-2-Clause OR MIT"

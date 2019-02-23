@@ -83,7 +83,7 @@ impl Plugin {
 	
 	/// The capsule format UID
 	pub fn capsule_format_uid(&self) -> String {
-		unsafe{ String::from_c_str_limit((self.capsule_format_uid)(), 64) }.unwrap()
+		unsafe{ String::from_c_str((self.capsule_format_uid)()) }.unwrap()
 	}
 	
 	/// The available capsule keys

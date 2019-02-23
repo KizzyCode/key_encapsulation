@@ -4,8 +4,8 @@ use crate::ffi::{ CSource, CSink, CError };
 
 const API_VERSION: u8 = 1;
 const TEST_USER_SECRET: &[u8] = b"Testolope";
-static FORMAT_UID: &'static [u8; 64] =
-	b"TestCapsuleFormat.3A0351A7-FE90-4383-9E68-FCC20033D5F1\0\0\0\0\0\0\0\0\0\0";
+static FORMAT_UID: &'static [u8] =
+	b"TestCapsuleFormat.3A0351A7-FE90-4383-9E68-FCC20033D5F1\0";
 
 
 /// This function initializes the library, sets the log_level and returns the API version

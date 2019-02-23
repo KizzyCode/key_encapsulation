@@ -99,11 +99,9 @@ uint8_t const* capsule_format_uid();
 
 This function returns a const static pointer the plugin's capsule format UID. It *MUST NOT* fail or return `NULL`.
 
-The capsule format UID is a 64 byte UTF-8 UID. If the UID is shorter than 64 bytes, it *MUST* be `'\0'`-padded.
-
-The capsule format UID *MUST* map to one format only. To achieve this, we append a random UUID; e.g.
-`AES-256-GCM-IETF.v1.B593CCDE-B5C3-433A-ABBA-9087FBF13E60`. If you write a fully compatible drop-in replacement for an
-already existing plugin, you *MAY* use the original format UID.
+The capsule format UID is a `'\0'`-terminated UTF-8 string which *MUST* map to one format only. To achieve this, we
+append a random UUID; e.g. `AES-256-GCM-IETF.v1.B593CCDE-B5C3-433A-ABBA-9087FBF13E60`. If you write a fully compatible
+drop-in replacement for an already existing plugin, you *MAY* use the original format UID.
 
 
 === capsule_key_ids
