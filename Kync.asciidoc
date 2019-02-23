@@ -94,7 +94,7 @@ StdErr-logging_
 === capsule_format_uid
 [source,cpp]
 ----
-uint8_t const* capsule_format_uid();
+char const* capsule_format_uid();
 ----
 
 This function returns a const static pointer the plugin's capsule format UID. It *MUST NOT* fail or return `NULL`.

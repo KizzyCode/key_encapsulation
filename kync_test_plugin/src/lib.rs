@@ -1,5 +1,6 @@
 mod ffi;
 use crate::ffi::{ CSource, CSink, CError };
+use std::os::raw::c_char;
 
 
 const API_VERSION: u8 = 1;
@@ -16,8 +17,8 @@ pub extern "C" fn init(_log_level: u8) -> u8 {
 
 /// This function returns a const pointer the plugin’s capsule format UID
 #[no_mangle]
-pub extern "C" fn capsule_format_uid() -> *const u8 {
-	FORMAT_UID.as_ptr()
+pub extern "C" fn capsule_format_uid() -> *const c_char {
+	FORMAT_UID.as_ptr() as *const c_char
 }
 
 

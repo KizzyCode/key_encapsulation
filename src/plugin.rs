@@ -2,6 +2,7 @@ use crate::{ KyncError, CSource, AsCSource, CSink, AsCSink, ffi::{ CError, FromC
 use std::path::Path;
 use libloading::Library;
 use crate::ErrorKind;
+use std::os::raw::c_char;
 
 
 /// The current API version
@@ -31,7 +32,7 @@ pub fn os_default_suffix() -> &'static str {
 
 /// A key capsule plugin (see "Kync.asciidoc" for further API documentation)
 pub struct Plugin {
-	capsule_format_uid: unsafe extern "C" fn() -> *const u8,
+	capsule_format_uid: unsafe extern "C" fn() -> *const c_char,
 	
 	capsule_key_ids: unsafe extern "C" fn(id_buffer: CSink) -> CError,
 	
