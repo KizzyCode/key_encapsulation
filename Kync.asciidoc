@@ -11,7 +11,7 @@ password-encrypted in a file or in the OS' keychain.
 
 
 == Plugin API
-To achive a simple and cross-platform compatible API, we use dynamic libraries that expose a C API/ABI.
+To achieve a simple and cross-platform compatible API, we use dynamic libraries that expose a C API/ABI.
 
 
 === General Rules
@@ -110,9 +110,8 @@ drop-in replacement for an already existing plugin, you *MAY* use the original f
 error_t capsule_key_ids(sink_t ids);
 ----
 
-This function writes all available capsule key IDs as concatenated `uint8_t[256]`-arrays into `ids`. It is useful if the
-plugin offers it's own key store that you can/must use (e.g. GnuPG). If an ID is shorter than 256 bytes, it *MUST* be
-`'\0'`-padded. The ID must be an UTF-8 string.
+This function writes all available capsule key IDs as concatenated, `'\0'`-terminated UTF-8 strings into `ids`. It is
+used if the plugin offers it's own key store that you can/must use (e.g. GnuPG).
 
 If the plugin does not support a key store, it *MUST* return an `ENOKEY`-error.
 

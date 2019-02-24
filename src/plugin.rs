@@ -84,7 +84,7 @@ impl Plugin {
 	
 	/// The capsule format UID
 	pub fn capsule_format_uid(&self) -> String {
-		unsafe{ String::from_c_str((self.capsule_format_uid)()) }.unwrap()
+		unsafe{ String::from_c_str((self.capsule_format_uid)()) }.unwrap().0
 	}
 	
 	/// The available capsule keys
@@ -92,14 +92,15 @@ impl Plugin {
 		// Collect all key UIDs
 		let mut buf = Vec::new();
 		unsafe{ (self.capsule_key_ids)(buf.as_c_sink()) }.check()?;
-		assert_eq!(buf.len() % 256, 0);
 		
 		// Parse all key UIDs
-		let uids = buf.chunks(256)
-			.map(|uid| unsafe{ String::from_c_str_limit(uid.as_ptr(), 256) })
-			.map(|s| s.unwrap())
-			.collect();
-		
+		let (mut uids, mut pos) = (Vec::new(), 0);
+		while pos < buf.len() {
+			// Read string and increment the position by `uid_len`+ 1 (for the `'\0'`-byte)
+			let (uid, uid_len) = String::from_c_str_slice(&buf[pos..]).unwrap();
+			pos += uid_len + 1;
+			uids.push(uid);
+		}
 		Ok(uids)
 	}
 	

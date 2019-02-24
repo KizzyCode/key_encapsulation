@@ -76,24 +76,22 @@ impl AsCSink for Vec<u8> {
 }
 
 
-/// Creates a string from a C-string
+/// Creates a string from a `'\0'`-terminated C-string
 pub trait FromCStr: Sized {
-	/// Creates a string from a `c_str`; reads until either a `'\0`-byte is found or `limit` is
-	/// reached and returns the String or `None` if `c_str` is `NULL`.
+	/// Creates a string from a `c_str`; reads until a `'\0`-byte is found and returns
+	/// `(string, string_len)` or `None` if `c_str` is `NULL`.
 	///
 	/// _Note: This function panics if the string is not UTF-8_
-	unsafe fn from_c_str_limit<T>(c_str: *const T, limit: usize) -> Option<Self>;
+	unsafe fn from_c_str(c_str: *const c_char) -> Option<(Self, usize)>;
 	
-	/// Creates a string from a `c_str`; reads until a `'\0`-byte is found and returns the String or
-	/// `None` if `c_str` is `NULL`.
+	/// Creates a string from a `c_str`; reads until a `'\0`-byte is found and returns
+	/// `(string, string_len)` or `None` if no terminating `'\0'`-byte was found.
 	///
 	/// _Note: This function panics if the string is not UTF-8_
-	unsafe fn from_c_str<T>(c_str: *const T) -> Option<Self> {
-		Self::from_c_str_limit(c_str, usize::MAX)
-	}
+	fn from_c_str_slice(c_str: &[u8]) -> Option<(Self, usize)>;
 }
 impl FromCStr for String {
-	unsafe fn from_c_str_limit<T>(c_str: *const T, limit: usize) -> Option<Self> {
+	unsafe fn from_c_str(c_str: *const c_char) -> Option<(Self, usize)> {
 		// Cast pointer
 		let c_str = match c_str.is_null() {
 			true => return None,
@@ -102,11 +100,18 @@ impl FromCStr for String {
 		
 		// Determine the string length
 		let mut len = 0usize;
-		while c_str.add(len).read() != 0x00 && len < limit { len += 1 }
+		while c_str.add(len).read() != 0x00 { len += 1 }
 		
 		// Create vector and string
-		let c_str = slice::from_raw_parts(c_str, len).to_vec();
-		Some(String::from_utf8(c_str).unwrap())
+		let c_str = slice::from_raw_parts(c_str as *const u8, len).to_vec();
+		Some((String::from_utf8(c_str).unwrap(), len))
+	}
+	
+	fn from_c_str_slice(c_str: &[u8]) -> Option<(Self, usize)> {
+		// Determine the string length and create the string
+		let len = c_str.iter().enumerate()
+			.find_map(|(i, b)| if *b == b'\0' { Some(i) } else { None })?;
+		Some((String::from_utf8(c_str[..len].to_vec()).unwrap(), len))
 	}
 }
 
@@ -128,7 +133,7 @@ impl CError {
 		};
 		
 		// Match the error type
-		let kind = match error_type.as_str() {
+		let kind = match error_type.0.as_str() {
 			"EPERM" => ErrorKind::PermissionDenied{ requires_authentication: self.info != 0 },
 			"EACCESS" => ErrorKind::AccessDenied {
 				retries_left: match self.info {
@@ -150,7 +155,7 @@ impl CError {
 		// Convert strings
 		Err(KyncError {
 			kind,
-			desc: unsafe{ String::from_c_str(self.description) }
+			desc: unsafe{ String::from_c_str(self.description) }.map(|s| s.0)
 		})
 	}
 }
