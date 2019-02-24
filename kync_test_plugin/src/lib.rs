@@ -22,21 +22,22 @@ pub extern "C" fn capsule_format_uid() -> *const c_char {
 }
 
 
-/// This function writes all available capsule key IDs as concatenated `[u8; 256]`-arrays into `ids`
+/// This function writes all available crypto item IDs as concatenated `[u8; 256]`-arrays into `ids`
 #[no_mangle]
-pub extern "C" fn capsule_key_ids(_ids: CSink) -> CError {
-	CError::enokey().desc(b"This plugin does not use a key store\0")
+pub extern "C" fn crypto_item_ids(_ids: CSink) -> CError {
+	CError::enotfound().desc(b"This plugin does not support multiple crypto items\0")
 }
 
 
 /// This function seals the key bytes in `key` and writes the resulting data to `sink`
 #[no_mangle]
-pub extern "C" fn seal(mut sink: CSink, key: CSource, capsule_key_id: CSource, user_secret: CSource)
+pub extern "C" fn seal(mut sink: CSink, key: CSource, crypto_item_id: CSource, user_secret: CSource)
 	-> CError
 {
 	// Validate that we have NO capsule ID
-	if capsule_key_id.data().is_some() {
-		return CError::einval(2).desc(b"This plugin does not use a key store\0")
+	if crypto_item_id.data().is_some() {
+		return CError::einval(2)
+			.desc(b"This plugin does not support multiple crypto items\0")
 	}
 	
 	// Check that we have a key

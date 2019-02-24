@@ -144,7 +144,7 @@ impl CError {
 			"ENOBUF" => ErrorKind::BufferError { required_size: self.info },
 			"EIO" => ErrorKind::IoError,
 			"EILSEQ" => ErrorKind::InvalidData,
-			"ENOKEY" => ErrorKind::NoKeyAvailable,
+			"ENOTFOUND" => ErrorKind::ItemNotFound,
 			"EINVAL" => ErrorKind::InvalidParameter{ index: self.info },
 			"ECANCELED" => ErrorKind::OperationCancelled,
 			"ETIMEDOUT" => ErrorKind::OperationTimedOut,

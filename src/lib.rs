@@ -1,4 +1,5 @@
-//! This crate is an implementation of the Kync specification (see "Kync.asciidoc")
+//! This crate is an implementation of the KyNc specification (see
+//! [Kync.asciidoc](https://github.com/KizzyCode/kync/blob/master/Kync.asciidoc))
 
 mod ffi;
 pub mod plugin;
@@ -25,9 +26,9 @@ pub enum ErrorKind {
 	IoError,
 	/// Invalid data
 	InvalidData,
-	/// There are no capsule keys to list (because the plugin has no key store) or there is no valid
-	/// key available to decrypt the capsule
-	NoKeyAvailable,
+	/// There are no crypto items to list (because the plugin has no key store) or there is no
+	/// matching algorithm/key available to encrypt/decrypt the capsule
+	ItemNotFound,
 	/// An invalid parameter was passed
 	InvalidParameter{ index: u64 },
 	/// The operation was canceled by the user

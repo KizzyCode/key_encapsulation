@@ -34,11 +34,11 @@ pub fn os_default_suffix() -> &'static str {
 pub struct Plugin {
 	capsule_format_uid: unsafe extern "C" fn() -> *const c_char,
 	
-	capsule_key_ids: unsafe extern "C" fn(id_buffer: CSink) -> CError,
+	crypto_item_ids: unsafe extern "C" fn(id_buffer: CSink) -> CError,
 	
 	seal: unsafe extern "C" fn(
 		sink: CSink, key: CSource,
-		capsule_key_id: CSource, user_secret: CSource
+		crypto_item_id: CSource, user_secret: CSource
 	) -> CError,
 	open: unsafe extern "C" fn(
 		sink: CSink, capsule: CSource,
@@ -51,10 +51,7 @@ impl Plugin {
 	/// Load the library
 	pub fn load(path: impl AsRef<Path>) -> Result<Self, KyncError> {
 		// Determine the log-level
-		let log_level = match cfg!(debug_assertions) {
-			true => 1u8,
-			false => 0u8
-		};
+		let log_level = if cfg!(debug_assertions) { 1 } else { 0 };
 		
 		// Load library
 		#[cfg(target_os = "linux")]
@@ -74,7 +71,7 @@ impl Plugin {
 		Ok(Self {
 			capsule_format_uid: *unsafe{ library.get(b"capsule_format_uid\0")? },
 			
-			capsule_key_ids: *unsafe{ library.get(b"capsule_key_ids\0")? },
+			crypto_item_ids: *unsafe{ library.get(b"crypto_item_ids\0")? },
 			seal: *unsafe{ library.get(b"seal\0")? },
 			open: *unsafe{ library.get(b"open\0")? },
 			
@@ -87,18 +84,18 @@ impl Plugin {
 		unsafe{ String::from_c_str((self.capsule_format_uid)()) }.unwrap().0
 	}
 	
-	/// The available capsule keys
-	pub fn capsule_key_ids(&self) -> Result<Vec<String>, KyncError> {
+	/// The available crypto item IDs
+	pub fn crypto_item_ids(&self) -> Result<Vec<String>, KyncError> {
 		// Collect all key UIDs
 		let mut buf = Vec::new();
-		unsafe{ (self.capsule_key_ids)(buf.as_c_sink()) }.check()?;
+		unsafe{ (self.crypto_item_ids)(buf.as_c_sink()) }.check()?;
 		
 		// Parse all key UIDs
 		let (mut uids, mut pos) = (Vec::new(), 0);
 		while pos < buf.len() {
-			// Read string and increment the position by `uid_len`+ 1 (for the `'\0'`-byte)
-			let (uid, uid_len) = String::from_c_str_slice(&buf[pos..]).unwrap();
-			pos += uid_len + 1;
+			// Read string and increment the position by `len + 1` (for the `'\0'`-byte)
+			let (uid, len) = String::from_c_str_slice(&buf[pos..]).unwrap();
+			pos += len + 1;
 			uids.push(uid);
 		}
 		Ok(uids)
@@ -106,12 +103,12 @@ impl Plugin {
 	
 	/// Seals a key into `buf` and returns the amount of bytes written
 	pub fn seal(&self, buf: &mut Vec<u8>, key: &[u8],
-		capsule_key_id: Option<&[u8]>, user_secret: Option<&[u8]>)
+		crypto_item_id: Option<&[u8]>, user_secret: Option<&[u8]>)
 		-> Result<usize, KyncError>
 	{
 		unsafe{ (self.seal)(
 			buf.as_c_sink(), key.as_c_source(),
-			capsule_key_id.as_c_source(), user_secret.as_c_source()
+			crypto_item_id.as_c_source(), user_secret.as_c_source()
 		) }.check()?;
 		Ok(buf.len())
 	}

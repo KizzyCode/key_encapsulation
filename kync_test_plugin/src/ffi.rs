@@ -83,9 +83,9 @@ impl CError {
 	pub fn eilseq() -> Self {
 		Self::new(b"EILSEQ\0", 0)
 	}
-	/// Creates an `ENOKEY` error
-	pub fn enokey() -> Self {
-		Self::new(b"ENOKEY\0", 0)
+	/// Creates an `ENOTFOUND` error
+	pub fn enotfound() -> Self {
+		Self::new(b"ENOTFOUND\0", 0)
 	}
 	/// Creates an `EINVAL` error
 	pub fn einval(index: u64) -> Self {

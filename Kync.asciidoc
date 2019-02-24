@@ -18,8 +18,11 @@ To achieve a simple and cross-platform compatible API, we use dynamic libraries 
 These general rules apply to all API functions and *MUST* be respected by any plugin that implement this API:
 
 . Each function that may fail *MUST* return the error type
+
 . No ownership is transferred
+
 . An API-call *MUST NOT* take longer than 90 seconds before returning
+
 . All functions *MUST* be threadsafe as long as their parameters are not shared
 
 
@@ -27,11 +30,18 @@ These general rules apply to all API functions and *MUST* be respected by any pl
 These functions are defined by the API and *MUST* be implemented:
 
 . `source_t` and `sink_t`: The data source/sink types
+
 . `init`: Takes care of the library initialization and returns the implemented API version
+
 . `capsule_format_uid`: Returns the capsule format UID for the implemented format
-. `capsule_key_ids`: Gets all available capsule key IDs (for plugins that have their own key storage; e.g. GnuPG)
+
+. `crypto_item_ids`: Gets all available crypto item IDs (for plugins that implement multiple algorithms or have their
+  own key storage; e.g. GnuPG)
+
 . `seal`: Seals some key bytes into a capsule
+
 . `open`: Extracts the key bytes from a capsule
+
 . `error_t`: The error type
 
 
@@ -51,9 +61,11 @@ source!_
 
 Fields:
 
-. `data`: A function that returns the available bytes in `handle` and adjusts `len` accordingly. The returned pointer
-  *MAY* be `NULL` in case this source is not available (*MUST NOT* be confused with an empty source!). This function
-  *MAY* be called multiple times and *MUST* always return the same result.
+. `data`: A function that returns the available bytes in `handle` and adjusts `len` accordingly
+** The returned pointer *MAY* be `NULL` in case this source is not available (which *MUST NOT* be confused with an empty
+   source!)
+** This function *MAY* be called multiple times in which case it *MUST* always return the same result.
+
 . `handle`: An opaque pointer to the data-source handle
 
 
@@ -68,10 +80,11 @@ typedef struct {
 
 A simple, callback based data-sink.
 
-. `data`: A function that returns a pointer to a `len` sized memory-area within `handle` which can be written. If the
-  returned pointer is `NULL`, an `ENOBUF`-error *MUST* be returned. This function *MAY* be called multiple times to
-  allow partial writes; on successive calls it *MUST* return new a pointer to an empty (not already written) slice of
-  memory.
+. `data`: A function that returns a pointer to a `len` sized memory-area within `handle` which can be written
+** If the returned pointer is `NULL`, an `ENOBUF`-error *MUST* be returned.
+** This function *MAY* be called multiple times to allow partial writes in which case it *MUST* return a _new_ pointer
+   to an _empty_ (not already written) slice of memory.
+
 . `handle`: An opaque pointer to the data-sink handle
 
 
@@ -104,22 +117,24 @@ append a random UUID; e.g. `AES-256-GCM-IETF.v1.B593CCDE-B5C3-433A-ABBA-9087FBF1
 drop-in replacement for an already existing plugin, you *MAY* use the original format UID.
 
 
-=== capsule_key_ids
+=== crypto_item_ids
 [source,cpp]
 ----
-error_t capsule_key_ids(sink_t ids);
+error_t crypto_item_ids(sink_t ids);
 ----
 
-This function writes all available capsule key IDs as concatenated, `'\0'`-terminated UTF-8 strings into `ids`. It is
-used if the plugin offers it's own key store that you can/must use (e.g. GnuPG).
+This function writes all available crypto item IDs as concatenated, `'\0'`-terminated UTF-8 strings into `ids`.
 
-If the plugin does not support a key store, it *MUST* return an `ENOKEY`-error.
+Crypto item IDs identify a specific algorithm or key in case the plugin allows multiple algorithms (e.g. `"AES-128"` vs.
+`"AES-256"`) or offers multiple keys from a key store (e.g. GnuPG).
+
+If the plugin does not support multiple crypto items, it *MUST* return an `ENOTFOUND`-error.
 
 
 === seal
 [source,cpp]
 ----
-error_t seal(sink_t sink, source_t key, source_t capsule_key_id, source_t user_secret);
+error_t seal(sink_t sink, source_t key, source_t crypto_item_id, source_t user_secret);
 ----
 
 This function seals a `key` and writes the resulting data to `sink`.
@@ -127,13 +142,19 @@ This function seals a `key` and writes the resulting data to `sink`.
 Parameters:
 
 . `sink`: The payload destination
+
 . `key`: The slice containing the key bytes to seal
-. `capsule_key_id`: The capsule key ID to use (see `capsule_key_ids`); *MUST* be unavailable if it is not necessary for
-  the call – _if_ the plugin does not support a key store or the requested key is unavailable, it *MUST* return an
-  `ENOKEY`-error.
-. `user_secret`: A user-provided secret. This parameter may have multiple, plugin-dependent purposes; ranging from a
-  hardware-token-PIN to the capsule key itself. *MAY* be unavailable if it is not necessary for the call – _if_ it is
-  unavailable, a plugin *MUST NOT* perform any authentication attempts that could decrease a retry counter.
+
+. `crypto_item_id`: The crypto item ID to use (see `crypto_item_id`)
+** The source *MUST* be unavailable if the plugin does not support multiple crypto items (if violated an `EINVAL`-error
+   *MUST* be returned).
+** The source *MAY* be unavailable even if the plugin supports multiple crypto items in which case a reasonable default
+   *SHOULD* be selected if possible (if not possible, an `ENOTFOUND`-error *MUST* be returned).
+
+. `user_secret`: A user-provided secret which may have multiple, plugin-dependent purposes; ranging from a
+  hardware-token-PIN to the capsule key itself
+** The source *MAY* be unavailable in case is not necessary for the call – _if_ it is unavailable, a plugin *MUST NOT*
+   perform any authentication attempts that could decrease a retry counter.
 
 
 === open
@@ -147,10 +168,13 @@ This function opens a `capsule` and writes the resulting key bytes into `sink`.
 Parameters:
 
 . `sink`: The plaintext-key destination
+
 . `capsule`: The capsule data
-. `user_secret`: A user-provided secret. This parameter may have multiple, plugin-dependent purposes; ranging from a
-  hardware-token-PIN to the capsule key itself. *MAY* be unavailable if it is not necessary for the call – _if_ it is
-  unavailable, a plugin *MUST NOT* perform any authentication attempts that could decrease a retry counter.
+
+. `user_secret`: A user-provided secret which may have multiple, plugin-dependent purposes; ranging from a
+  hardware-token-PIN to the capsule key itself
+** The source *MAY* be unavailable in case is not necessary for the call – _if_ it is unavailable, a plugin *MUST NOT*
+   perform any authentication attempts that could decrease a retry counter.
 
 
 === error_t
@@ -168,7 +192,9 @@ The error type.
 Fields:
 
 . `error_type`: The error type as `0`-terminated string or a `NULL`-pointer if no error occurred
+
 . `info`: An error-specific info field
+
 . `description`: An error description as `0`-terminated string; *MUST NOT* be `NULL`
 
 
@@ -196,8 +222,8 @@ the required size.
 `"EILSEQ"` indicates invalid capsule data. `info` is unused.
 
 
-==== ENOKEY
-`"ENOKEY"` indicates that there is no matching key available to decrypt the capsule. `info` is unused.
+==== ENOTFOUND
+`"ENOTFOUND"` indicates that there is no matching key available to decrypt the capsule. `info` is unused.
 
 
 ==== EINVAL
