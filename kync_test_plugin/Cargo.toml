@@ -1,17 +1,24 @@
 [package]
 name = "kync_test_plugin"
 edition = "2018"
-version = "0.1.3"
+version = "0.1.4"
 authors = ["KizzyCode <development@kizzycode.de>"]
 description = "A test plugin for kync"
 license = "BSD-2-Clause OR MIT"
 repository = "https://github.com/KizzyCode/kync"
 readme = "README.md"
 
+[badges]
+travis-ci = { repository = "KizzyCode/kync" }
+appveyor = { repository = "KizzyCode/kync" }
+maintenance = { status = "passively-maintained" }
+is-it-maintained-open-issues = { repository = "KizzyCode/kync" }
+is-it-maintained-issue-resolution = { repository = "KizzyCode/kync" }
+
 
 [lib]
 name = "kync_test_plugin"
-crate-type = ["dylib"]
+crate-type = ["cdylib"]
 
 
 [dependencies]

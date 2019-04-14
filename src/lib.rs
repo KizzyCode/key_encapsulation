@@ -5,11 +5,10 @@ mod ffi;
 pub mod plugin;
 
 use std::{
-	error::Error as StdError,
-	fmt::{ Display, Formatter, Result as FmtResult },
-	io::{ Error as IoError, ErrorKind as IoErrorKind }
+	io, error::Error,
+	fmt::{ self, Display, Formatter }
 };
-pub use crate::{ plugin::Plugin, ffi::{ CSource, AsCSource, CSink, AsCSink } };
+pub use crate::plugin::Plugin;
 
 
 /// The error kind
@@ -20,8 +19,6 @@ pub enum ErrorKind {
 	/// An authentication error occurred (e.g. bad PIN, password etc.); if the amount of retries
 	/// left is `None`, this means that there is no limit
 	AccessDenied{ retries_left: Option<u64> },
-	/// The provided buffer is too small and cannot be resized
-	BufferError{ required_size: u64 },
 	/// An IO-error occurred
 	IoError,
 	/// Invalid data
@@ -51,7 +48,7 @@ pub struct KyncError {
 	pub desc: Option<String>
 }
 impl Display for KyncError {
-	fn fmt(&self, f: &mut Formatter) -> FmtResult {
+	fn fmt(&self, f: &mut Formatter) -> fmt::Result {
 		write!(f, "{:?}", &self.kind)?;
 		if let Some(desc) = self.desc.as_ref() { write!(f, " ({:#?})", desc)?; }
 		Ok(())
@@ -67,14 +64,14 @@ impl<T: ToString> From<(ErrorKind, T)> for KyncError {
 		Self{ kind: kind_desc.0, desc: Some(kind_desc.1.to_string()) }
 	}
 }
-impl From<IoErrorKind> for KyncError {
-	fn from(io_error_kind: IoErrorKind) -> Self {
+impl From<io::ErrorKind> for KyncError {
+	fn from(io_error_kind: io::ErrorKind) -> Self {
 		Self{ kind: ErrorKind::IoError, desc: Some(format!("{:#?}", io_error_kind)) }
 	}
 }
-impl From<IoError> for KyncError {
-	fn from(io_error: IoError) -> Self {
+impl From<io::Error> for KyncError {
+	fn from(io_error: io::Error) -> Self {
 		Self{ kind: ErrorKind::IoError, desc: Some(format!("{}", io_error)) }
 	}
 }
-impl StdError for KyncError {}
+impl Error for KyncError {}

@@ -1,8 +1,9 @@
-use crate::{ KyncError, CSource, AsCSource, CSink, AsCSink, ffi::{ CError, FromCStr } };
-use std::path::Path;
+use crate::{
+	KyncError, ErrorKind,
+	ffi::{ self, ErrorExt}
+};
+use std::{ ptr, path::Path };
 use libloading::Library;
-use crate::ErrorKind;
-use std::os::raw::c_char;
 
 
 /// The current API version
@@ -32,27 +33,17 @@ pub fn os_default_suffix() -> &'static str {
 
 /// A key capsule plugin (see "Kync.asciidoc" for further API documentation)
 pub struct Plugin {
-	capsule_format_uid: unsafe extern "C" fn() -> *const c_char,
-	
-	crypto_item_ids: unsafe extern "C" fn(id_buffer: CSink) -> CError,
-	
-	seal: unsafe extern "C" fn(
-		sink: CSink, key: CSource,
-		crypto_item_id: CSource, user_secret: CSource
-	) -> CError,
-	open: unsafe extern "C" fn(
-		sink: CSink, capsule: CSource,
-		user_secret: CSource
-	) -> CError,
+	buf_len: ffi::BufLenFn,
+	capsule_format_uid: ffi::CapsuleFormatUidFn,
+	crypto_item_ids: ffi::CryptoItemIdsFn,
+	seal: ffi::SealFn,
+	open: ffi::OpenFn,
 	
 	_library: Library
 }
 impl Plugin {
 	/// Load the library
 	pub fn load(path: impl AsRef<Path>) -> Result<Self, KyncError> {
-		// Determine the log-level
-		let log_level = if cfg!(debug_assertions) { 1 } else { 0 };
-		
 		// Load library
 		#[cfg(target_os = "linux")]
 		let library: Library = {
@@ -63,14 +54,17 @@ impl Plugin {
 		#[cfg(not(target_os = "linux"))]
 		let library = Library::new(path.as_ref())?;
 		
-		// Validate loaded library
-		let init: unsafe extern "C" fn(u8) -> u8 = *unsafe{ library.get(b"init\0")? };
-		if unsafe{ init(log_level) } != API_VERSION { Err(ErrorKind::Unsupported)? }
+		// Init plugin and validate the API version
+		let log_level = if cfg!(debug_assertions) { 1 } else { 0 };
+		let mut api_version = 0;
+		
+		unsafe{ library.get::<ffi::InitFn>(b"init\0")?(&mut api_version, log_level) };
+		if api_version != API_VERSION { Err(ErrorKind::Unsupported)? }
 		
 		// Create plugin
 		Ok(Self {
+			buf_len: *unsafe{ library.get(b"buf_len\0")? },
 			capsule_format_uid: *unsafe{ library.get(b"capsule_format_uid\0")? },
-			
 			crypto_item_ids: *unsafe{ library.get(b"crypto_item_ids\0")? },
 			seal: *unsafe{ library.get(b"seal\0")? },
 			open: *unsafe{ library.get(b"open\0")? },
@@ -79,47 +73,101 @@ impl Plugin {
 		})
 	}
 	
-	/// The capsule format UID
+	/// Computes the buffer length required for a call to `fn_name` with an `input_len`-sized input
+	fn buf_len(&self, fn_name: &[u8], input_len: usize) -> usize {
+		let mut buf_len = 0;
+		unsafe{ (self.buf_len)(&mut buf_len, fn_name.as_ptr(), fn_name.len(), input_len) }
+		buf_len
+	}
+	
+	/// Returns the capsule format UID
 	pub fn capsule_format_uid(&self) -> String {
-		unsafe{ String::from_c_str((self.capsule_format_uid)()) }.unwrap().0
+		// Create buffer
+		let mut format_uid =
+			vec![0; self.buf_len(b"capsule_format_uid", 0)];
+		let mut format_uid_len = 0;
+		
+		// Get data, truncate vector and create string
+		unsafe{ (self.capsule_format_uid)(format_uid.as_mut_ptr(), &mut format_uid_len) }
+		format_uid.truncate(format_uid_len);
+		String::from_utf8(format_uid).unwrap()
 	}
 	
 	/// The available crypto item IDs
 	pub fn crypto_item_ids(&self) -> Result<Vec<String>, KyncError> {
-		// Collect all key UIDs
-		let mut buf = Vec::new();
-		unsafe{ (self.crypto_item_ids)(buf.as_c_sink()) }.check()?;
+		// Allocate buffer
+		let mut buf = vec![0; self.buf_len(b"crypto_item_ids", 0)];
+		let mut buf_written = 0;
 		
-		// Parse all key UIDs
-		let (mut uids, mut pos) = (Vec::new(), 0);
-		while pos < buf.len() {
-			// Read string and increment the position by `len + 1` (for the `'\0'`-byte)
-			let (uid, len) = String::from_c_str_slice(&buf[pos..]).unwrap();
-			pos += len + 1;
-			uids.push(uid);
-		}
-		Ok(uids)
+		// Collect all IDs
+		unsafe{ (self.crypto_item_ids)(buf.as_mut_ptr(), &mut buf_written) }.check()?;
+		buf.truncate(buf_written);
+		
+		// Parse all item IDs
+		let ids = buf.split(|b| *b == 0)
+			.map(|b| String::from_utf8(b.to_vec()).unwrap())
+			.collect();
+		Ok(ids)
 	}
 	
+	/// The buffer size necessary for a call to `seal`
+	pub fn seal_buf_len(&self, input_len: usize) -> usize {
+		self.buf_len(b"seal", input_len)
+	}
 	/// Seals a key into `buf` and returns the amount of bytes written
-	pub fn seal(&self, buf: &mut Vec<u8>, key: &[u8],
-		crypto_item_id: Option<&[u8]>, user_secret: Option<&[u8]>)
-		-> Result<usize, KyncError>
+	pub fn seal(&self, buf: &mut[u8], key: &[u8], crypto_item_id: Option<&[u8]>,
+		user_secret: Option<&[u8]>) -> Result<usize, KyncError>
 	{
+		// Validate the buffer
+		assert!(buf.len() >= self.seal_buf_len(key.len()));
+		
+		// Map crypto item ID and user secret
+		let (crypto_item_id, crypto_item_id_len) = match crypto_item_id {
+			Some(id) => (id.as_ptr(), id.len()),
+			None => (ptr::null(), 0)
+		};
+		let (user_secret, user_secret_len) = match user_secret {
+			Some(secret) => (secret.as_ptr(), secret.len()),
+			None => (ptr::null(), 0)
+		};
+		
+		// Seal the key
+		let mut buf_written = 0;
 		unsafe{ (self.seal)(
-			buf.as_c_sink(), key.as_c_source(),
-			crypto_item_id.as_c_source(), user_secret.as_c_source()
+			buf.as_mut_ptr(), &mut buf_written,
+			key.as_ptr(), key.len(),
+			crypto_item_id, crypto_item_id_len,
+			user_secret, user_secret_len
 		) }.check()?;
-		Ok(buf.len())
+		
+		Ok(buf_written)
 	}
 	
+	/// The buffer size necessary for a call to `open`
+	pub fn open_buf_len(&self, input_len: usize) -> usize {
+		self.buf_len(b"open", input_len)
+	}
 	/// Opens the `capsule` into `buf` and returns the amount of bytes written
 	pub fn open(&self, buf: &mut Vec<u8>, capsule: &[u8], user_secret: Option<&[u8]>)
 		-> Result<usize, KyncError>
 	{
+		// Validate the buffer
+		assert!(buf.len() >= self.open_buf_len(capsule.len()));
+		
+		// Map user secret
+		let (user_secret, user_secret_len) = match user_secret {
+			Some(secret) => (secret.as_ptr(), secret.len()),
+			None => (ptr::null(), 0)
+		};
+		
 		// Call function
-		unsafe{ (self.open)(buf.as_c_sink(), capsule.as_c_source(), user_secret.as_c_source()) }
-			.check()?;
-		Ok(buf.len())
+		let mut buf_written = 0;
+		unsafe{ (self.open)(
+			buf.as_mut_ptr(), &mut buf_written,
+			capsule.as_ptr(), capsule.len(),
+			user_secret, user_secret_len
+		) }.check()?;
+		
+		Ok(buf_written)
 	}
 }
