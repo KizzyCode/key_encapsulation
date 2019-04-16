@@ -1,7 +1,7 @@
 [package]
 name = "kync"
 edition = "2018"
-version = "0.1.7"
+version = "0.1.8"
 authors = ["KizzyCode <development@kizzycode.de>"]
 description = "KyNc – a generic API for key encapsulation and a Rust interface to KyNc-plugins"
 categories = ["cryptography", "api-bindings"]

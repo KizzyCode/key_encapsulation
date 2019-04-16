@@ -5,7 +5,7 @@
 [![Download numbers](https://img.shields.io/crates/d/kync.svg)](https://crates.io/crates/kync)
 [![Travis CI](https://travis-ci.org/KizzyCode/kync.svg?branch=master)](https://travis-ci.org/KizzyCode/kync)
 [![AppVeyor CI](https://ci.appveyor.com/api/projects/status/github/KizzyCode/kync?svg=true)](https://ci.appveyor.com/project/KizzyCode/kync)
-[![dependency status](https://deps.rs/crate/kync/0.1.3/status.svg)](https://deps.rs/crate/kync/0.1.3)
+[![dependency status](https://deps.rs/crate/kync/0.1.8/status.svg)](https://deps.rs/crate/kync/0.1.8)
 
 
 # KyNc
