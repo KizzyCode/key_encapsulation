@@ -148,7 +148,7 @@ impl Plugin {
 		self.buf_len(b"open", input_len)
 	}
 	/// Opens the `capsule` into `buf` and returns the amount of bytes written
-	pub fn open(&self, buf: &mut Vec<u8>, capsule: &[u8], user_secret: Option<&[u8]>)
+	pub fn open(&self, buf: &mut[u8], capsule: &[u8], user_secret: Option<&[u8]>)
 		-> Result<usize, KyncError>
 	{
 		// Validate the buffer
