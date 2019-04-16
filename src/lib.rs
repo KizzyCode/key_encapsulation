@@ -2,6 +2,8 @@
 //! [Kync.asciidoc](https://github.com/KizzyCode/kync/blob/master/Kync.asciidoc))
 
 mod ffi;
+
+/// A key capsule plugin (see "Kync.asciidoc" for further API documentation) and some helpers
 pub mod plugin;
 
 use std::{
