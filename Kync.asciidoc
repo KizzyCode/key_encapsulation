@@ -3,11 +3,12 @@
 
 
 == General
-Kync describes a **K**e**Y**e**NC**apsulation plugin-API for key encapsulation plugins.
+Kync describes a **K**e**Y**e**NC**apsulation plugin API – a KyNc plugin protects a secret for your
+app.
 
-Key encapsulation is the process of encrypting an already existing key with another different key.
-This allows you to separate your application from the key storage so that the user can specify how
-the key is stored – e.g. password-encrypted in a file or in the OS' keychain.
+The advantage of separating the app and the key storage is that the secret can be stored in a
+context specific and user defined way by simply loading another plugin – how the secret is protected
+becomes completely opaque to your app.
 
 
 == Plugin API
@@ -15,238 +16,198 @@ To achieve a simple and cross-platform compatible API, we use dynamic libraries 
 API/ABI.
 
 
-=== General Design
-Those design rules apply to all functions:
+=== General Rules
+These rules apply to all functions:
 
-. Functions that may fail return a pointer to a _thread local_ error struct (similar to `errno` but
-  with more information) or `NULL` in case of success
+. All functions may fail. If they fail they return a pointer to a statically allocated,
+  `\0`-terminated C string. Otherwise they return `NULL`.
 
-. The thread local error struct is only valid until another plugin function is called on the same
-  thread
-
-. Functions that will not fail return `void`
-
-. No ownership is transferred
+. All structs, callbacks etc. are passed as pointers; no ownership is transferred
 
 . An API-call *MUST NOT* take longer than 90 seconds before returning
 
-. All functions *MUST* be threadsafe as long as their parameters are not shared
-
-. Human readable/UTF-8 names/identifiers must not include a `\0` byte/`NUL` codepoint – if such an
-  identifier is passed as `\0`-terminated string, the `\0` bytes *MUST NOT* be included in the
-  length field
-
-. Passing immutable data to a function follows the `uint8_t const* data, size_t data_len` rule
-
-. To pass a mutable buffer, get the buffer size using `buf_len` and create and pass a buffer using
-  the `uint8_t* buf, size_t* buf_written` rule
+. If a callback fails, the operation must be canceled and the callback error *MUST* be propagated
 
 
 === API Overview
 These functions are defined by the API and *MUST* be implemented:
 
-. `init`: Takes care of the library initialization and returns the implemented API version
+. `init`: Initializes the library, sets the log level and checks if the requested API is supported
 
-. `buf_len`: Determines the buffer size required for a specific function call
+. `id`: Queries the plugin/format ID
 
-. `capsule_format_uid`: Returns the capsule format UID for the implemented format
+. `configs`: Queries all possible plugin configurations (available algorithms, tokens etc.)
 
-. `crypto_item_ids`: Gets all available crypto item IDs (for plugins that implement multiple
-  algorithms or have their own key storage; e.g. GnuPG)
+. `auth_info`: Queries the authentication requirements for a specific configuration
 
-. `seal`: Seals some key bytes into a capsule
+. `protect`: Protects a secret and generates the necessary public recovery information for it
 
-. `open`: Extracts the key bytes from a capsule
+. `recover`: Recovers a secret using the public recovery information
 
-. `error_t`: The error type of the thread local error struct
+. `slice_t`: An immutable slice over some bytes
+
+. `write_t`: A write callback
 
 
-=== init
+=== `init`
 [source,cpp]
 ----
-void init(uint8_t* api_version, uint8_t log_level);
+const char* init(uint16_t api, uint8_t log_level);
 ----
 
-This function initializes the library, sets the `log_level` and writes the API version to the
-`api_version` pointer. It *MUST NOT* fail. The API version for this specification is `0x01`.
+This function initializes the library, sets the `log_level` and checks if the requested `api`
+version is implemented.
 
 Parameters:
 
-. `api_version`: The target to write the supported API version to
+. `api`: The requested API version (this document defines the API `0x01_00`)
 
 . `log_level`: The logging level the plugin should use (`0` means no logging). _Note: This applies
   to StdErr-logging only_
 
 
-=== buf_len
+=== `id`
 [source,cpp]
 ----
-void buf_len(size_t* buf_len, uint8_t const* fn_name, size_t fn_name_len, size_t input_len);
+const char* id(write_t* sink);
 ----
 
-This function computes the buffer size necessary for a call to `fn_name` which will process
-`input_len` bytes of input and writes the result to `buf_len`
+This function writes the capsule UID to `sink` using a single `sink.write`-call.
 
 Parameters:
 
-. `buf_len`:The target to write the computed buffer length to
-
-. `fn_name`: The function name
-
-. `input_len`: The amount of bytes `func` will process when called
+. `sink`: The sink to write the ID to
 
 
-=== capsule_format_uid
+=== `configs`
 [source,cpp]
 ----
-void capsule_format_uid(uint8_t* uid, size_t* uid_written);
+const char* configs(write_t* sink);
 ----
 
-This function writes the capsule UID to `uid`. It *MUST NOT* fail. The capsule format UID is
-consists of UTF-8 data which *MUST* map to one format only. To achieve this, a random UUID is
-appended to each name; e.g. `AES-256-GCM-IETF.v1.B593CCDE-B5C3-433A-ABBA-9087FBF13E60`. If you write
-a fully compatible drop-in replacement for an already existing plugin, you *MAY* use the original
-format UID.
+This function writes all available configs to `sink` using a single `sink.write`-call for each
+config (e.g. three configs result in three `sink.write`-calls).
 
-Parameter `uid`: The target to write the UID to
-
-
-=== crypto_item_ids
-[source,cpp]
-----
-error_t const* crypto_item_ids(uint8_t* buf, size_t* buf_written);
-----
-
-This function writes all available crypto item IDs as concatenated, `'\0'`-terminated UTF-8 data to
-`buf`.
-
-Crypto item IDs identify a specific algorithm or key in case the plugin allows multiple algorithms
-(e.g. `"AES-128"` vs. `"AES-256"`) or offers multiple keys from a key store (e.g. GnuPG).
-
-If the plugin does not support multiple crypto items, it *MUST* return an `ENOTFOUND`-error.
-
-
-=== seal
-[source,cpp]
-----
-error_t const* seal(
-	uint8_t* buf, size_t* buf_written,
-	uint8_t const* key, size_t key_len,
-	uint8_t const* crypto_item_id, size_t crypto_item_id_len,
-	uint8_t const* user_secret, size_t user_secret_len
-);
-----
-
-This function seals a `key` and writes the resulting data to `sink`.
+Configs identify a specific algorithm/storage/token etc. There must at least be one config.
 
 Parameters:
 
-. `buf`: The payload destination
-
-. `key`: The slice containing the key bytes to seal
-
-. `crypto_item_id`: The `'\0'`-terminated UTF-8 crypto item ID to use (see `crypto_item_ids`)
-** The pointer *MUST* be `NULL` if the plugin does not support multiple crypto items – if violated,
-   an `EINVAL`-error *MUST* be returned.
-** The pointer *MAY* have a `0` length even if the plugin supports multiple crypto items in which
-   case a reasonable default *SHOULD* be selected if possible – if not possible, an
-   `ENOTFOUND`-error *MUST* be returned.
-
-. `user_secret`: A user-provided secret which may have multiple, plugin-dependent purposes; ranging
-  from a hardware-token-PIN to the capsule key itself
-** The pointer *MAY* be `NULL` in it case is not necessary for the call – _if_ it is `NULL`, a
-   plugin *MUST NOT* perform any authentication attempts that could decrease a retry counter.
+. `sink`: The sink to write the configs to
 
 
-=== open
+=== `set_context`
 [source,cpp]
 ----
-error_t const* open(
-	uint8_t* buf, size_t* buf_written,
-	uint8_t const* capsule, size_t capsule_len,
-	uint8_t const* user_secret, size_t user_secret_len
-);
+const char* set_context(const slice_t* context);
 ----
 
-This function opens a `capsule` and writes the resulting key bytes into `sink`.
+This functions sets an optional application specific context. This makes it possible for the plugin
+to generate more meaningful names etc. Plugins may silently ignore a call to `set_context` and
+*MUST NOT* return an error unless they want to but cannot use the context.
 
 Parameters:
 
-. `buf`: The plaintext-key destination
-
-. `capsule`: The capsule data
-
-. `user_secret`: A user-provided secret which may have multiple, plugin-dependent purposes; ranging
-  from a hardware-token-PIN to the capsule key itself
-** The pointer *MAY* be `NULL` in case it is not necessary for the call – _if_ it is `NULL`, a
-   plugin *MUST NOT* perform any authentication attempts that could decrease a retry counter.
+. `context`: The application context (e.g. the application name and key usage)
 
 
-=== error_t
+=== `auth_info_protect`, `auth_info_recover`
 [source,cpp]
 ----
-typedef struct {
-	uint8_t const* error_type;
-	size_t error_type_len;
-
-	uint8_t const* description;
-	size_t description_len;
-
-	uint64_t info;
-} error_t;
+const char* auth_info_protect(uint8_t* is_required, uint64_t* retries, const slice_t* config);
+const char* auth_info_recover(uint8_t* is_required, uint64_t* retries, const slice_t* config);
 ----
 
-The error type.
+These functions query the authentication requirements to protect/recover a secret for a specific
+config. The functions check *if* an authentication is necessary and get the number if retries left.
+
+Parameters:
+
+. `is_required`: Is set to `1` if an authentication is required, `0` otherwise
+
+. `retries`: Is set to the amount of retries left or `UINT64_MAX` if there is no limit
+
+. `config`: The config to get the authentication information for
+
+
+=== `protect`
+[source,cpp]
+----
+const char* protect(write_t* sink, const slice_t* data, const slice_t* config, const slice_t* auth);
+----
+
+This function protects `data` and writes the public recovery information to `sink`.
+
+Parameters:
+
+. `sink`: The sink to write the public recovery information to
+
+. `data`: The secret data to protect
+
+. `config`: The configuration to use
+
+. `auth`: The authentication information or `NULL` if no authentication attempt should be performed
+
+
+=== `recover`
+[source,cpp]
+----
+const char* recover(write_t* sink, const slice_t* data, const slice_t* auth);
+----
+
+This recovers a secret from the recovery `data` and writes it to `sink`.
+
+Parameters:
+
+. `sink`: The sink to write the public recovery information to
+
+. `data`: The secret data to protect
+
+. `auth`: The authentication information or `NULL` if no authentication attempt should be performed
+
+
+=== `slice_t`
+[source,cpp]
+----
+typedef struct slice_t slice_t;
+/// A slice over some data
+struct slice_t {
+	/// The data
+	const uint8_t* ptr;
+	/// The data length
+	const size_t len;
+};
+----
+
+An immutable slice over some data.
 
 Fields:
 
-. `error_type`: The error type as UTF-8 data; *MAY* be `NULL` if no error occurred
+. `ptr`: A pointer to the data
 
-. `info`: An error-specific info field
-
-. `description`: An error description as UTF-8 data; *MAY* be `NULL`
+. `len`: The length of the data
 
 
-==== EPERM
-`EPERM` indicates that an operation is not permitted (at least without providing authentication
-data).
+=== `write_t`
+[source,cpp]
+----
+typedef struct write_t write_t;
+/// A write callback
+struct write_t {
+	/// An opaque handle to the data sink
+	void* handle;
+	/// Pushes a segment to `handle` and returns `NULL` on success or a pointer to a static error
+	/// description
+	const char* (*write)(void* handle, const slice_t* data);
+};
+----
 
-`info` indicates if the action requires authentication (`info != 0`) or if the action will always
-fail (`info == 0`).
+A write callback to write some data to an opaque handle. The write function may be called multiple
+times – either to split the data into different logical segments (e.g. <<_configs>>) or just because
+the data is not available at once (e.g. <<_protect>> and <<_recover>>).
 
+Fields:
 
-==== EACCES
-`EACCES` indicates an authentication error. `info` indicates the amount of retries left; if there
-is no retry-limit, `info` is `UINT64_MAX`.
+. `handle`: A pointer to an opaque handle
 
-
-==== EIO
-`EIO` indicates an I/O-related error. `info` is unused.
-
-
-==== EILSEQ
-`EILSEQ` indicates invalid capsule data. `info` is unused.
-
-
-==== ENOTFOUND
-`ENOTFOUND` indicates that there is no matching key available to decrypt the capsule. `info` is
-unused.
-
-
-==== EINVAL
-`EINVAL` indicates an invalid parameter. `info` is the `0`-based index of the parameter.
-
-
-==== ECANCELED
-`ECANCELED` indicates that the operation was canceled. `info` is unused.
-
-
-==== ETIMEDOUT
-`ETIMEDOUT` indicates that the operation timed out – either because it hit the 90s deadline or
-because something else
-timed out (e.g. hardware token). `info` is unused.
-
-
-==== EOTHER
-`EOTHER` indicates that an unspecified fatal error occurred. `info` *MAY* be a plugin-specific
-error code and *MUST* be ignored if it's meaning is unknown.
+. `write`: A pointer to a write implementation that writes `data` to `handle` and returns `NULL` on
+  success or an error pointer on error

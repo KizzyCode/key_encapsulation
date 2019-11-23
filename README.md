@@ -5,7 +5,7 @@
 [![Download numbers](https://img.shields.io/crates/d/kync.svg)](https://crates.io/crates/kync)
 [![Travis CI](https://travis-ci.org/KizzyCode/kync.svg?branch=master)](https://travis-ci.org/KizzyCode/kync)
 [![AppVeyor CI](https://ci.appveyor.com/api/projects/status/github/KizzyCode/kync?svg=true)](https://ci.appveyor.com/project/KizzyCode/kync)
-[![dependency status](https://deps.rs/crate/kync/0.1.8/status.svg)](https://deps.rs/crate/kync/0.1.8)
+[![dependency status](https://deps.rs/crate/kync/0.2.0/status.svg)](https://deps.rs/crate/kync/0.2.0)
 
 
 # KyNc
@@ -14,15 +14,17 @@ This crate is a Rust interface to
 
 
 ## What is the purpose of KyNc and this crate?
-Short: Abstracting key management away.
+Short: Protecting sensible data in a user defined/context sensitive way.
 
-Long: [KyNc defines](https://github.com/KizzyCode/kync/blob/master/Kync.asciidoc) and this crate
-implements a plugin interface, that allows to use plugins for key management. Your app generates a
-random key to do something and the user can specify how this key is stored. Some users may install a
-plugin that uses GnuPG to seal the key, some people may load a plugin that uses a password to
-encrypt the key, and some companies may use their own custom plugins that integrate perfectly in
-their environment. And they only need to do it once – because if a specific plugin has been created,
-it can be used with all applications that implement KyNc.
+Long: [KyNc defines](https://github.com/KizzyCode/kync/blob/master/Kync.asciidoc) a plugin API that
+allows your app to load context specific or user selected plugins to protect your app's secrets. If
+your app e.g. uses a login token or a database master key, it can be protected in a user controlled
+and context specific way. On macOS/iOS the keychain may be the way to go, on Linux some users may
+want to use GnuPG to protect the secret etc. Some people and companies may even implement their own 
+custom plugins that specifically suit their needs.
+
+The main advantage of a unified API like KyNc is that once you have a (custom) plugin you can load
+it into every app that wants to store secrets and implements KyNc.
 
 
 ## ⚠️ State ⚠️

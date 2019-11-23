@@ -1,127 +1,180 @@
 mod ffi;
-use ffi::{ ErrorExt, error_t };
-use std::slice;
+
+use ffi::{ MutPtrExt, SliceTExt, WriteTExt, sys };
+use std::{ ptr, os::raw::c_char };
+use crate::ffi::sys::slice_t;
 
 
-const API_VERSION: u8 = 1;
+const API: u16 = 0x01_00;
 const USER_SECRET: &[u8] = b"Testolope";
-static UID: &[u8] = b"TestCapsuleFormat.3A0351A7-FE90-4383-9E68-FCC20033D5F1";
+const UID: &[u8] = b"TestCapsuleFormat.3A0351A7-FE90-4383-9E68-FCC20033D5F1";
+const CONFIGS: &[&[u8]] = &[b"Default"];
 
 
-/// Initializes the plugin
-#[no_mangle]
-pub extern "C" fn init(api_version: *mut u8, _log_level: u8) {
-	assert!(!api_version.is_null());
-	
-	unsafe{ *api_version = API_VERSION }
+/// Logs some text
+fn log(s: impl AsRef<str>) {
+	println!("{}", s.as_ref())
 }
 
-/// Computes the buffer size necessary for a call to `fn_name` which will process `input_len` bytes
-/// of input and writes the result to `buf_len`
-#[no_mangle]
-pub extern "C" fn buf_len(buf_len: *mut usize, fn_name: *const u8, fn_name_len: usize,
-	input_len: usize)
-{
-	assert!(!buf_len.is_null());
-	assert!(!fn_name.is_null());
-	
-	// Get the function name
-	let fn_name = unsafe{ slice::from_raw_parts(fn_name, fn_name_len) };
-	let len = match fn_name {
-		b"capsule_format_uid" => UID.len(),
-		b"crypto_item_ids" => 0,
-		b"seal" => input_len,
-		b"open" => input_len,
-		_ => 0
-	};
-	unsafe{ *buf_len = len }
-}
-
-/// Writes the plugin UID to `uid`
-#[no_mangle]
-pub extern "C" fn capsule_format_uid(uid: *mut u8, uid_written: *mut usize) {
-	assert!(!uid.is_null());
-	
-	// Copy the UID
-	let uid = unsafe{ slice::from_raw_parts_mut(uid, UID.len()) };
-	uid.copy_from_slice(UID);
-	unsafe{ *uid_written = UID.len() }
+/// Converts a `Result<(), *const c_char>>` to a nullable error pointer
+fn try_catch(f: impl FnOnce() -> Result<(), *const c_char>) -> *const c_char {
+	f().err().unwrap_or(ptr::null())
 }
 
 
-/// Writes all crypto item IDs as `\0`-terminated, concatenated UTF-8 strings to `_buf`
+/// Initializes the library with a specific API version and a logging level
+///
+/// Returns `NULL` on success or a pointer to a static error description
 #[no_mangle]
-pub extern "C" fn crypto_item_ids(_buf: *mut u8, _buf_written: *mut usize) -> *const error_t {
-	error_t::enotfound().set_desc(b"This plugin does not support multiple crypto items")
-}
-
-
-/// Seals `key` into `buf`
-#[no_mangle]
-pub extern "C" fn seal(buf: *mut u8, buf_written: *mut usize, key: *const u8, key_len: usize,
-	crypto_item_id: *const u8, _crypto_item_id_len: usize, user_secret: *const u8,
-	user_secret_len: usize) -> *const error_t
-{
-	assert!(!buf.is_null());
-	assert!(!buf_written.is_null());
-	assert!(!key.is_null());
-	
-	// Validate that we have NO crypto item ID but a user secret and get the key
-	match crypto_item_id.is_null() {
-		true => (),
-		false => return error_t::einval(4).set_desc(b"Multiple crypto items are unsupported")
-	};
-	let user_secret = match user_secret.is_null() {
-		true => return error_t::eperm(true)
-			.set_desc(b"A user secret is obligatory"),
-		false => unsafe{ slice::from_raw_parts(user_secret, user_secret_len) }
-	};
-	
-	// Get buffer and key
-	let buf = unsafe{ slice::from_raw_parts_mut(buf, key_len) };
-	let key = unsafe{ slice::from_raw_parts(key, key_len) };
-	
-	// Check `user_secret` (note that this is inherently insecure and for demo-purposes only)
-	match user_secret {
-		USER_SECRET => (),
-		_ => return error_t::eacces(None).set_desc(b"Invalid user secret")
+extern "C" fn init(api: u16, _log_level: u8) -> *const c_char {
+	match api {
+		API => ptr::null(),
+		_ => b"Unsupported API version\0".as_ptr().cast()
 	}
-	
-	// "Encrypt" the key by reversing it
-	key.iter().rev().enumerate().for_each(|(i, b)| buf[i] = *b);
-	unsafe{ *buf_written = key.len() };
-	error_t::ok()
 }
 
 
-/// Opens `capsule` into `buf`
+/// Queries the plugin/format ID
+///
+/// Returns `NULL` on success or a pointer to a static error description
 #[no_mangle]
-pub extern "C" fn open(buf: *mut u8, buf_written: *mut usize, capsule: *const u8,
-	capsule_len: usize, user_secret: *const u8, user_secret_len: usize) -> *const error_t
+extern "C" fn id(sink: *mut sys::write_t) -> *const c_char {
+	try_catch(|| sink.checked_write(UID))
+}
+
+
+/// Queries all possible configs and writes them as separate segments
+///
+/// Returns `NULL` on success or a pointer to a static error description
+#[no_mangle]
+extern "C" fn configs(sink: *mut sys::write_t) -> *const c_char {
+	try_catch(|| CONFIGS.iter().try_for_each(|c| sink.checked_write(c)))
+}
+
+
+/// Sets an optional application specific context if supported (useful to name the keys better etc.)
+///
+/// Returns `NULL` on success/if unsupported or a pointer to a static error description if a context
+/// is supported by the plugin but could not be set
+#[no_mangle]
+extern "C" fn set_context(_context: *const sys::slice_t) -> *const c_char {
+	ptr::null()
+}
+
+
+/// Queries the authentication requirements to protect a secret for a specific config
+///
+/// Returns `NULL` on success or a pointer to a static error description
+#[no_mangle]
+extern "C" fn auth_info_protect(is_required: *mut u8, retries: *mut u64, config: *const slice_t)
+	-> *const c_char
 {
-	assert!(!buf.is_null());
-	assert!(!buf_written.is_null());
-	assert!(!capsule.is_null());
-	
-	// Validate that we have a user secret
-	let user_secret = match user_secret.is_null() {
-		true => return error_t::eperm(true)
-			.set_desc(b"A user secret is obligatory"),
-		false => unsafe{ slice::from_raw_parts(user_secret, user_secret_len) }
-	};
-	
-	// Get buffer and capsule
-	let buf = unsafe{ slice::from_raw_parts_mut(buf, capsule_len) };
-	let capsule = unsafe{ slice::from_raw_parts(capsule, capsule_len) };
-	
-	// Check `user_secret` (note that this is inherently insecure and for demo-purposes only)
-	match user_secret {
-		USER_SECRET => (),
-		_ => return error_t::eacces(None).set_desc(b"Invalid user secret")
+	try_catch(|| {
+		// Validate config
+		if !CONFIGS.contains(&config.checked_slice()?) {
+			Err(b"Invalid configuration\0".as_ptr().cast())?
+		}
+		
+		// Set requirements
+		is_required.checked_set(1)?;
+		retries.checked_set(u64::max_value())?;
+		Ok(())
+	})
+}
+
+
+/// Queries the authentication requirements to recover a secret for a specific config
+///
+/// Returns `NULL` on success or a pointer to a static error description
+#[no_mangle]
+extern "C" fn auth_info_recover(is_required: *mut u8, retries: *mut u64, config: *const slice_t)
+	-> *const c_char
+{
+	try_catch(|| {
+		// Validate config
+		if !CONFIGS.contains(&config.checked_slice()?) {
+			Err(b"Invalid configuration\0".as_ptr().cast())?
+		}
+		
+		// Set requirements
+		is_required.checked_set(1)?;
+		retries.checked_set(u64::max_value())?;
+		Ok(())
+	})
+}
+
+
+/// Protects some data
+///
+/// Returns `NULL` on success or a pointer to a static error description
+#[no_mangle]
+extern "C" fn protect(sink: *mut sys::write_t, data: *const sys::slice_t,
+	config: *const sys::slice_t, auth: *const sys::slice_t) -> *const c_char
+{
+	try_catch(|| {
+		// Validate config
+		if !CONFIGS.contains(&config.checked_slice()?) {
+			Err(b"Invalid configuration\0".as_ptr().cast())?
+		}
+		
+		// Validate authentication
+		let auth = auth.checked_slice()
+			.map_err(|_| b"Missing authentication parameter\0".as_ptr().cast())?;
+		if auth != USER_SECRET {
+			Err(b"Invalid authentication\0".as_ptr().cast())?
+		}
+		
+		// Obfuscate the data by reversing it
+		let mut data: Vec<u8> = data.checked_slice()?.to_vec();
+		data.reverse();
+		sink.checked_write(data)
+	})
+}
+
+
+/// Opens `data` to `sink` using `auth` and `config`
+///
+/// Returns `NULL` on success or a pointer to a static error description
+#[no_mangle]
+extern "C" fn recover(sink: *mut sys::write_t, data: *const sys::slice_t, auth: *const sys::slice_t)
+	-> *const c_char
+{
+	try_catch(|| {
+		// Validate authentication
+		let auth = auth.checked_slice()
+			.map_err(|_| b"Missing authentication parameter\0".as_ptr().cast())?;
+		if auth != USER_SECRET {
+			Err(b"Invalid authentication\0".as_ptr().cast())?
+		}
+		
+		// Recover the data
+		let mut data = data.checked_slice()?.to_vec();
+		data.reverse();
+		sink.checked_write(data)
+	})
+}
+
+
+#[test]
+fn test_types() {
+	struct Fns {
+		_init: sys::init,
+		_id: sys::id,
+		_configs: sys::configs,
+		_set_context: sys::set_context,
+		_auth_info_protect: sys::auth_info_protect,
+		_auth_info_recover: sys::auth_info_recover,
+		_protect: sys::protect,
+		_recover: sys::recover
 	}
-	
-	// "Decrypt" the key by reversing it
-	capsule.iter().rev().enumerate().for_each(|(i, b)| buf[i] = *b);
-	unsafe{ *buf_written = capsule.len() };
-	error_t::ok()
+	let _fns = Fns {
+		_init: Some(init),
+		_id: Some(id),
+		_configs: Some(configs),
+		_set_context: Some(set_context),
+		_auth_info_protect: Some(auth_info_protect),
+		_auth_info_recover: Some(auth_info_recover),
+		_protect: Some(protect),
+		_recover: Some(recover)
+	};
 }

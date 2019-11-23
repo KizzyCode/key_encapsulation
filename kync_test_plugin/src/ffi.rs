@@ -1,93 +1,80 @@
-use std::{ ptr, u64, ops::DerefMut, cell::RefCell };
+#![allow(non_camel_case_types)]
+use crate::log;
+use std::{ slice, ffi::CStr, os::raw::c_char };
 
 
-/// A trait to extend `*mut error_t`
-pub trait ErrorExt {
-	/// Sets the description if `self` is not `NULL`
-	fn set_desc(self, d: &'static[u8]) -> Self;
+/// An error string indicating a NULL pointer error
+const ERR_NULLPTR: *const c_char = b"Unexpected NULL pointer\n".as_ptr().cast();
+
+
+/// An extension to work with statically allocated constant C strings
+pub trait StaticCharPtrExt {
+	/// Checks if there is an non-`NULL` error pointer
+	fn check(self) -> Result<(), *const c_char>;
 }
-impl ErrorExt for *mut error_t {
-	fn set_desc(self, d: &'static[u8]) -> Self {
-		if !self.is_null() {
-			unsafe{ (*self).description = d.as_ptr() }
-			unsafe{ (*self).description_len = d.len() }
+impl StaticCharPtrExt for *const c_char {
+	fn check(self) -> Result<(), *const c_char> {
+		match self.is_null() {
+			true => Ok(()),
+			false => {
+				log(unsafe{ CStr::from_ptr(self) }.to_string_lossy());
+				Err(self)
+			}
 		}
-		self
 	}
 }
 
 
-/// The thread local error
-thread_local! {
-	static THREAD_LOCAL_ERR: RefCell<error_t> = RefCell::new(error_t {
-		error_type: ptr::null(), error_type_len: 0,
-		description: ptr::null(), description_len: 0,
-		info: 0
-	});
+/// An extension to check and assign to a mutable pointer
+pub trait MutPtrExt<T: Copy> {
+	/// Checks and assigns a value to a `*mut T`
+	fn checked_set(self, v: T) -> Result<(), *const c_char>;
 }
-/// The type of a thread-local error
-#[repr(C)] #[allow(non_camel_case_types)]
-pub struct error_t {
-	/// The error type (one of the predefined identifiers) or empty in case no error occurred (yet)
-	error_type: *const u8,
-	error_type_len: usize,
-	/// The error description or empty
-	description: *const u8,
-	description_len: usize,
-	/// Some error specific info
-	info: u64
+impl<T: Copy> MutPtrExt<T> for *mut T {
+	fn checked_set(self, v: T) -> Result<(), *const c_char> {
+		let this = unsafe{ self.as_mut() }.ok_or(ERR_NULLPTR)?;
+		Ok(*this = v)
+	}
 }
-impl error_t {
-	/// Creates a new error with `t` as error type and `i` as info
-	fn set(t: &'static [u8], i: u64) -> *mut Self {
-		THREAD_LOCAL_ERR.with(|e| {
-			e.borrow_mut().error_type = t.as_ptr();
-			e.borrow_mut().error_type_len = t.len();
-			e.borrow_mut().description = ptr::null();
-			e.borrow_mut().description_len = 0;
-			e.borrow_mut().info = i;
-			e.borrow_mut().deref_mut() as *mut Self
-		})
+
+
+/// The sys bindings
+pub mod sys {
+	#![allow(unused)]
+	include!("sys.rs");
+}
+
+
+/// An extension to check and deref the slice type
+pub trait SliceTExt {
+	/// Checks and wraps a `*const sys::slice_t`
+	fn checked_slice<'a>(self) -> Result<&'a[u8], *const c_char>;
+}
+impl SliceTExt for *const sys::slice_t {
+	fn checked_slice<'a>(self) -> Result<&'a[u8], *const c_char> {
+		let this = unsafe{ self.as_ref() }.ok_or(ERR_NULLPTR)?;
+		match this.ptr.is_null() {
+			false => Ok(unsafe{ slice::from_raw_parts(this.ptr, this.len) }),
+			true => Err(ERR_NULLPTR)
+		}
 	}
-	
-	/// Creates a new `error_t` that signalizes that no error occurred
-	pub fn ok() -> *const Self {
-		ptr::null()
-	}
-	/// Creates an `EPERM` error
-	pub fn eperm(required_authentication: bool) -> *mut Self {
-		Self::set(b"EPERM", if required_authentication { 1 } else { 0 })
-	}
-	/// Creates an `EACCES` error
-	pub fn eacces(retries_left: Option<u64>) -> *mut Self {
-		Self::set(b"EACCES", retries_left.unwrap_or(u64::MAX))
-	}
-	/// Creates an `EIO` error
-	pub fn eio() -> *mut Self {
-		Self::set(b"EIO", 0)
-	}
-	/// Creates an `EILSEQ` error
-	pub fn eilseq() -> *mut Self {
-		Self::set(b"EILSEQ", 0)
-	}
-	/// Creates an `ENOTFOUND` error
-	pub fn enotfound() -> *mut Self {
-		Self::set(b"ENOTFOUND", 0)
-	}
-	/// Creates an `EINVAL` error
-	pub fn einval(index: u64) -> *mut Self {
-		Self::set(b"EINVAL", index)
-	}
-	/// Creates an `ECANCELED` error
-	pub fn ecanceled() -> *mut Self {
-		Self::set(b"ECANCELED", 0)
-	}
-	/// Creates an `ETIMEDOUT` error
-	pub fn etimedout() -> *mut Self {
-		Self::set(b"ETIMEDOUT", 0)
-	}
-	/// Creates an `EOTHER` error
-	pub fn eother(errno: u64) -> *mut Self {
-		Self::set(b"EOTHER", errno)
+}
+
+
+/// An extension to check and write to the write callback
+pub trait WriteTExt {
+	/// Checks and writes a segment to a `*const sys::write_t`
+	fn checked_write(self, data: impl AsRef<[u8]>) -> Result<(), *const c_char>;
+}
+impl WriteTExt for *mut sys::write_t {
+	fn checked_write(self, data: impl AsRef<[u8]>) -> Result<(), *const c_char> {
+		let data = data.as_ref();
+		let slice = sys::slice_t{ ptr: data.as_ptr(), len: data.len() };
+		
+		let this = unsafe{ self.as_mut() }.ok_or(ERR_NULLPTR)?;
+		match this.handle.is_null() {
+			false => unsafe{ this.write.unwrap()(this.handle, &slice) }.check(),
+			true => Err(ERR_NULLPTR)
+		}
 	}
 }

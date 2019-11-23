@@ -1,9 +1,9 @@
 [package]
 name = "kync_test_plugin"
 edition = "2018"
-version = "0.1.4"
+version = "0.2.0"
 authors = ["KizzyCode <development@kizzycode.de>"]
-description = "A test plugin for kync"
+description = "A test plugin for KyNc"
 license = "BSD-2-Clause OR MIT"
 repository = "https://github.com/KizzyCode/kync"
 readme = "README.md"
@@ -26,6 +26,11 @@ crate-type = ["cdylib"]
 
 [profile.release]
 overflow-checks = true
+panic = "abort"
+
+[profile.dev]
+overflow-checks = true
+panic = "abort"
 
 [profile.bench]
 overflow-checks = true

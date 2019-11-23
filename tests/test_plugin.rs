@@ -1,5 +1,5 @@
 use kync::{
-	ErrorKind, Plugin,
+	Plugin,
 	plugin::{ os_default_prefix, os_default_suffix }
 };
 use std::path::PathBuf;
@@ -18,7 +18,7 @@ fn load_plugin() -> Plugin {
 }
 
 
-const FORMAT_UID: &str = "TestCapsuleFormat.3A0351A7-FE90-4383-9E68-FCC20033D5F1";
+const FORMAT_UID: &[u8] = b"TestCapsuleFormat.3A0351A7-FE90-4383-9E68-FCC20033D5F1";
 const USER_SECRET: Option<&[u8]> = Some(b"Testolope");
 const KEY: &[u8] = b"2nwBK-EkfXW-yWSQv-Vkab3-USHvX-WNJxa-GeXFJ-ecsjJ-imnft";
 const PAYLOAD: &[u8] = b"tfnmi-Jjsce-JFXeG-axJNW-XvHSU-3bakV-vQSWy-WXfkE-KBwn2";
@@ -26,50 +26,19 @@ const PAYLOAD: &[u8] = b"tfnmi-Jjsce-JFXeG-axJNW-XvHSU-3bakV-vQSWy-WXfkE-KBwn2";
 
 #[test]
 fn test() {
-	// Load plugin
+	// Load plugin and test format UID
 	let plugin = load_plugin();
+	assert_eq!(plugin.id().unwrap(), FORMAT_UID);
 	
-	// Test format UID
-	assert_eq!(plugin.capsule_format_uid(), FORMAT_UID);
+	// Get the first config
+	let configs = plugin.configs().unwrap();
+	assert_eq!(&configs[0], b"Default");
 	
-	// Seal a key
-	let mut buf: Vec<u8> = vec![0; plugin.seal_buf_len(KEY.len())];
-	let len = plugin.seal(
-		&mut buf, KEY,
-		None as Option<&[u8]>, USER_SECRET
-	).unwrap();
+	// Protect a key with config 0
+	let protected = plugin.protect(KEY, &configs[0], USER_SECRET).unwrap();
+	assert_eq!(protected, PAYLOAD);
 	
-	assert_eq!(&buf[..len], PAYLOAD);
-	
-	// Open a key
-	let mut buf = vec![0; plugin.open_buf_len(KEY.len())];
-	let len =
-		plugin.open(&mut buf, PAYLOAD, USER_SECRET).unwrap();
-	
-	assert_eq!(&buf[..len], KEY);
-}
-
-
-#[test]
-fn test_auth_errors() {
-	// Load pool
-	let plugin = load_plugin();
-	
-	// Sealing
-	let mut buf: Vec<u8> = vec![0; plugin.seal_buf_len(KEY.len())];
-	let err = plugin.seal(
-		&mut buf, KEY,
-		None as Option<&[u8]>, None as Option<&[u8]>
-	).unwrap_err();
-	
-	assert_eq!(err.kind, ErrorKind::PermissionDenied{ requires_authentication: true });
-	
-	// Opening
-	let mut buf: Vec<u8> = vec![0; plugin.open_buf_len(KEY.len())];
-	let err = plugin.open(
-		&mut buf, PAYLOAD,
-		None as Option<&[u8]>
-	).unwrap_err();
-	
-	assert_eq!(err.kind, ErrorKind::PermissionDenied{ requires_authentication: true });
+	// Recover a key
+	let recovered = plugin.recover(&protected, USER_SECRET).unwrap();
+	assert_eq!(recovered, KEY);
 }

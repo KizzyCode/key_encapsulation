@@ -1,139 +1,84 @@
-use crate::{ KyncError, ErrorKind };
-use std::{ slice, usize, u64 };
+#![allow(non_camel_case_types)]
+use crate::{ KyncError, KyncErrorKind };
+use std::{
+	ptr, slice, ffi::CStr, marker::PhantomData,
+	os::raw::{ c_char, c_void }
+};
 
 
-/// A trait to extend `*const error_t`
-pub trait ErrorExt {
-	/// Checks if `self` points to an `error_t` and translates it to a `Result<(), KyncError>`
-	fn check(self) -> Result<(), KyncError>;
+/// An extension to work with statically allocated constant C strings
+pub trait StaticCharPtrExt {
+	/// Checks if there is an non-`NULL` error pointer
+	fn check(self, kind: KyncErrorKind) -> Result<(), KyncError>;
 }
-impl ErrorExt for *const error_t {
-	//noinspection RsMatchCheck
-	fn check(self) -> Result<(), KyncError> {
-		// Check if the pointer contains an error or is `NULL`
-		let error = match unsafe{ self.as_ref() } {
-			Some(error) => error,
-			None => return Ok(())
-		};
-		
-		// Get the error type and the description
-		let error_type = match error.error_type_len {
-			0 => panic!("Invalid error type"),
-			len => unsafe{ slice::from_raw_parts(error.error_type, len) }
-		};
-		let desc = match error.description_len {
-			0 => None,
-			len => Some(unsafe{ slice::from_raw_parts(error.description, len) })
-		};
-		
-		// Match the error type
-		let kind = match error_type {
-			b"EPERM" => ErrorKind::PermissionDenied{ requires_authentication: error.info != 0 },
-			b"EACCESS" => ErrorKind::AccessDenied {
-				retries_left: match error.info {
-					u64::MAX => None,
-					retries_left => Some(retries_left)
-				}
-			},
-			b"EIO" => ErrorKind::IoError,
-			b"EILSEQ" => ErrorKind::InvalidData,
-			b"ENOTFOUND" => ErrorKind::ItemNotFound,
-			b"EINVAL" => ErrorKind::InvalidParameter{ index: error.info },
-			b"ECANCELED" => ErrorKind::OperationCancelled,
-			b"ETIMEDOUT" => ErrorKind::OperationTimedOut,
-			b"EOTHER" => ErrorKind::OtherPluginError{ errno: error.info },
-			_ => unreachable!("Invalid error type")
-		};
-		
-		// Create the error
-		Err(KyncError{ kind, desc: desc.map(|v| String::from_utf8_lossy(v).to_string()) })
+impl StaticCharPtrExt for *const c_char {
+	fn check(self, k: KyncErrorKind) -> Result<(), KyncError> {
+		match self.is_null() {
+			true => Ok(()),
+			false => Err(KyncError(k, unsafe{ CStr::from_ptr(self) }))
+		}
 	}
 }
 
 
-/// The type of a thread-local error
-#[repr(C)] #[allow(non_camel_case_types)]
-pub struct error_t {
-	/// The error type (one of the predefined identifiers) or empty in case no error occurred (yet)
-	pub error_type: *const u8,
-	pub error_type_len: usize,
-	/// The error description or empty
-	pub description: *const u8,
-	pub description_len: usize,
-	/// Some error specific info
-	pub info: u64
+/// The sys bindings
+pub mod sys {
+	include!("sys.rs");
 }
 
 
-/// Initializes the plugin
-///
-/// - `api_version`: A pointer to an integer to write the plugin\'s API version to
-/// - `log_level`: The log level the plugin should use (only applies to stderr)
-pub type InitFn = unsafe extern "C" fn(api_version: *mut u8, log_level: u8);
+/// An idiomatic wrapper around `sys::slice_t`
+pub struct Slice<'a>(sys::slice_t, PhantomData<&'a[u8]>);
+impl<'a> Slice<'a> {
+	/// A pointer to the underlying `sys::slice_t`
+	pub fn slice_t(&self) -> &sys::slice_t {
+		&self.0
+	}
+}
+impl<'a> From<&'a[u8]> for Slice<'a> {
+	fn from(s: &'a[u8]) -> Self {
+		Self(sys::slice_t{ ptr: s.as_ptr(), len: s.len() }, PhantomData)
+	}
+}
 
 
-/// Computes the buffer size necessary for a call to `func` which will process `input_len` bytes of
-/// input and writes the result to `buf_len`
-///
-///  - `buf_len`: A pointer to an integer to write the computed buffer length to
-///  - `fn_name`: The function identifier
-///  - `fn_name_len`: The length of `fn_name`
-///  - `input_len`: The amount of input bytes the function will process
-pub type BufLenFn = unsafe extern "C" fn(
-	buf_len: *mut usize,
-	fn_name: *const u8, fn_name_len: usize,
-	input_len: usize
-);
-
-
-/// Makes `uid` point to the capsule format UID
-///
-/// - `uid`: A pointer to a pointer to write the address of the static UID constant to
-/// - `uid_written`: A pointer to an integer to reflect the amount of bytes written to `uid`
-pub type CapsuleFormatUidFn = unsafe extern "C" fn (uid: *mut u8, uid_written: *mut usize);
-
-
-/// Writes all crypto item IDs as `\\0`-terminated, concatenated UTF-8 strings to `buf`
-///
-///  - `buf`: The buffer to write the concatenated crypto item UIDs to
-///  - `buf_written`: A pointer to an integer to reflect the amount of bytes written to `buf`
-///
-/// Returns either `NULL` in case of success or a pointer to the thread-local error struct
-pub type CryptoItemIdsFn = unsafe extern "C" fn(buf: *mut u8, buf_written: *mut usize)
-	-> *const error_t;
-
-
-/// Seals `key` into `buf`
-///
-///  - `buf`: The buffer to write the sealed key to
-///  - `buf_written`: A pointer to an integer to reflect the amount of bytes written to `buf`
-///  - `key`: The key to seal
-///  - `key_len`: The length of `key`
-///  - `crypto_item_id`: The crypt item to use (may be `NULL`; see specification)
-///  - `crypto_item_id_len`: The length of `crypto_item_uid`
-///  - `user_secret`: The user secret to use (may be `NULL`; see specification)
-///  - `user_secret_len`: The length of `user_secret`
-///
-/// Returns either `NULL` in case of success or a pointer to the thread-local error struct
-pub type SealFn = unsafe extern "C" fn(
-	buf: *mut u8, buf_written: *mut usize,
-	key: *const u8, key_len: usize,
-	crypto_item_id: *const u8, crypto_item_id_len: usize,
-	user_secret: *const u8, user_secret_len: usize
-) -> *const error_t;
-
-/// Opens `capsule` into `buf`
-///
-///  - `buf`: The buffer to write the opened key to
-///  - `buf_written`: A pointer to an integer to reflect the amount of bytes written to `buf`
-///  - `capsule`: The capsule to open
-///  - `capsule_len`: The length of `capsule`
-///  - `user_secret`: The user secret to use (may be `NULL`; see specification)
-///  - `user_secret_len`: The length of `user_secret`
-///
-/// Returns either `NULL` in case of success or a pointer to the thread-local error struct
-pub type OpenFn = unsafe extern "C" fn(
-	buf: *mut u8, buf_written: *mut usize,
-	capsule: *const u8, capsule_len: usize,
-	user_secret: *const u8, user_secret_len: usize
-) -> *const error_t;
+/// An idiomatic wrapper around `sys::write_t`
+pub struct Writer(sys::write_t);
+impl Writer {
+	/// Creates a new empty writer
+	pub fn new() -> Self {
+		let handle = Box::new(vec![vec![0u8; 0]; 0]);
+		Self(sys::write_t{ handle: Box::into_raw(handle).cast(), write: Some(Self::write) })
+	}
+	/// A pointer to the underlying `sys::write_t`
+	pub fn write_t(&mut self) -> &mut sys::write_t {
+		&mut self.0
+	}
+	
+	/// The write implementation
+	extern "C" fn write(handle: *mut c_void, data: *const sys::slice_t) -> *const c_char {
+		// Cast and deref the pointers
+		let handle = unsafe{ handle.cast::<Vec<Vec<u8>>>().as_mut() }
+			.expect("Unexpected NULL pointer");
+		let data = unsafe{ data.as_ref() }
+			.expect("Unexpected NULL pointer");
+		
+		// Append the slice
+		let data = unsafe{ slice::from_raw_parts(data.ptr, data.len) };
+		handle.push(data.to_vec());
+		ptr::null()
+	}
+}
+impl From<Writer> for Vec<Vec<u8>> {
+	fn from(writer: Writer) -> Self {
+		assert!(!writer.0.handle.is_null(), "Unexpected NULL pointer");
+		assert!(writer.0.write == Some(Writer::write), "Incompatible implementation");
+		*unsafe{ Box::from_raw(writer.0.handle.cast::<Vec<Vec<u8>>>()) }
+	}
+}
+impl From<Writer> for Vec<u8> {
+	fn from(writer: Writer) -> Self {
+		let vecs: Vec<Vec<u8>> = writer.into();
+		vecs.into_iter().flatten().collect()
+	}
+}

@@ -1,13 +1,13 @@
 use crate::{
-	KyncError, ErrorKind,
-	ffi::{ self, ErrorExt}
+	KyncError, KyncErrorKind,
+	ffi::{ StaticCharPtrExt, Slice, Writer, sys }
 };
 use std::{ ptr, path::Path };
 use libloading::Library;
 
 
 /// The current API version
-const API_VERSION: u8 = 1;
+const API_VERSION: u16 = 0x01_00;
 
 
 /// The current operating system's default dynamic library prefix (e.g. `"lib"` for Linux)
@@ -33,12 +33,13 @@ pub fn os_default_suffix() -> &'static str {
 
 /// A key capsule plugin (see "Kync.asciidoc" for further API documentation)
 pub struct Plugin {
-	buf_len: ffi::BufLenFn,
-	capsule_format_uid: ffi::CapsuleFormatUidFn,
-	crypto_item_ids: ffi::CryptoItemIdsFn,
-	seal: ffi::SealFn,
-	open: ffi::OpenFn,
-	
+	id: sys::id,
+	configs: sys::configs,
+	set_context: sys::set_context,
+	auth_info_protect: sys::auth_info_protect,
+	auth_info_recover: sys::auth_info_recover,
+	protect: sys::protect,
+	recover: sys::recover,
 	_library: Library
 }
 impl Plugin {
@@ -49,125 +50,104 @@ impl Plugin {
 		let library: Library = {
 			// Load library with RTLD_NOW | RTLD_NODELETE to fix a SIGSEGV
 			// (see https://github.com/nagisa/rust_libloading/issues/41)
-			::libloading::os::unix::Library::open(Some(path.as_ref()), 0x2 | 0x1000)?.into()
+			libloading::os::unix::Library::open(Some(path.as_ref()), 0x2 | 0x1000)?.into()
 		};
 		#[cfg(not(target_os = "linux"))]
 		let library = Library::new(path.as_ref())?;
 		
 		// Init plugin and validate the API version
-		let log_level = if cfg!(debug_assertions) { 1 } else { 0 };
-		let mut api_version = 0;
-		
-		unsafe{ library.get::<ffi::InitFn>(b"init\0")?(&mut api_version, log_level) };
-		if api_version != API_VERSION { Err(ErrorKind::Unsupported)? }
+		let log_level = match cfg!(debug_assertions) {
+			true => 1,
+			false => 0
+		};
+		let init: sys::init = *unsafe{ library.get(b"init\0")? };
+		unsafe{ init.unwrap()(API_VERSION, log_level) }.check(KyncErrorKind::InitError)?;
 		
 		// Create plugin
 		Ok(Self {
-			buf_len: *unsafe{ library.get(b"buf_len\0")? },
-			capsule_format_uid: *unsafe{ library.get(b"capsule_format_uid\0")? },
-			crypto_item_ids: *unsafe{ library.get(b"crypto_item_ids\0")? },
-			seal: *unsafe{ library.get(b"seal\0")? },
-			open: *unsafe{ library.get(b"open\0")? },
-			
+			id: *unsafe{ library.get(b"id\0")? },
+			configs: *unsafe{ library.get(b"configs\0")? },
+			set_context: *unsafe{ library.get(b"set_context\0")? },
+			auth_info_protect: *unsafe{ library.get(b"auth_info_protect\0")? },
+			auth_info_recover: *unsafe{ library.get(b"auth_info_recover\0")? },
+			protect: *unsafe{ library.get(b"protect\0")? },
+			recover: *unsafe{ library.get(b"recover\0")? },
 			_library: library
 		})
 	}
 	
-	/// Computes the buffer length required for a call to `fn_name` with an `input_len`-sized input
-	fn buf_len(&self, fn_name: &[u8], input_len: usize) -> usize {
-		let mut buf_len = 0;
-		unsafe{ (self.buf_len)(&mut buf_len, fn_name.as_ptr(), fn_name.len(), input_len) }
-		buf_len
+	/// The plugin/format ID
+	pub fn id(&self) -> Result<Vec<u8>, KyncError> {
+		let mut sink = Writer::new();
+		unsafe{ self.id.unwrap()(sink.write_t()) }.check(KyncErrorKind::IdError)?;
+		Ok(sink.into())
 	}
 	
-	/// Returns the capsule format UID
-	pub fn capsule_format_uid(&self) -> String {
-		// Create buffer
-		let mut format_uid =
-			vec![0; self.buf_len(b"capsule_format_uid", 0)];
-		let mut format_uid_len = 0;
-		
-		// Get data, truncate vector and create string
-		unsafe{ (self.capsule_format_uid)(format_uid.as_mut_ptr(), &mut format_uid_len) }
-		format_uid.truncate(format_uid_len);
-		String::from_utf8(format_uid).unwrap()
+	/// All possible configs
+	pub fn configs(&self) -> Result<Vec<Vec<u8>>, KyncError> {
+		let mut sink = Writer::new();
+		unsafe{ self.configs.unwrap()(sink.write_t()) }.check(KyncErrorKind::ConfigsError)?;
+		Ok(sink.into())
 	}
 	
-	/// The available crypto item IDs
-	pub fn crypto_item_ids(&self) -> Result<Vec<String>, KyncError> {
-		// Allocate buffer
-		let mut buf = vec![0; self.buf_len(b"crypto_item_ids", 0)];
-		let mut buf_written = 0;
-		
-		// Collect all IDs
-		unsafe{ (self.crypto_item_ids)(buf.as_mut_ptr(), &mut buf_written) }.check()?;
-		buf.truncate(buf_written);
-		
-		// Parse all item IDs
-		let ids = buf.split(|b| *b == 0)
-			.map(|b| String::from_utf8(b.to_vec()).unwrap())
-			.collect();
-		Ok(ids)
+	/// Sets an optional application specific context if supported (useful to assign better names
+	/// etc.)
+	pub fn set_context(&self, context: &[u8]) -> Result<(), KyncError> {
+		let context = Slice::from(context);
+		unsafe{ self.set_context.unwrap()(context.slice_t()) }
+			.check(KyncErrorKind::SetContextError)
 	}
 	
-	/// The buffer size necessary for a call to `seal`
-	pub fn seal_buf_len(&self, input_len: usize) -> usize {
-		self.buf_len(b"seal", input_len)
+	/// Checks if an authentication is required to protect a secret and gets the number of retries
+	/// left
+	pub fn auth_info_protect(&self, config: &[u8]) -> Result<(bool, u64), KyncError> {
+		let config = Slice::from(config);
+		let (mut required, mut retries) = (0u8, 0u64);
+		unsafe{ self.auth_info_protect.unwrap()(&mut required, &mut retries, config.slice_t()) }
+			.check(KyncErrorKind::AuthInfoError)?;
+		Ok((required != 0, retries))
 	}
-	/// Seals a key into `buf` and returns the amount of bytes written
-	pub fn seal(&self, buf: &mut[u8], key: &[u8], crypto_item_id: Option<&[u8]>,
-		user_secret: Option<&[u8]>) -> Result<usize, KyncError>
+	
+	/// Checks if an authentication is required to recover a secret and gets the number of retries
+	/// left
+	pub fn auth_info_recover(&self, config: &[u8]) -> Result<(bool, u64), KyncError> {
+		let config = Slice::from(config);
+		let (mut required, mut retries) = (0u8, 0u64);
+		unsafe{ self.auth_info_recover.unwrap()(&mut required, &mut retries, config.slice_t()) }
+			.check(KyncErrorKind::AuthInfoError)?;
+		Ok((required != 0, retries))
+	}
+	
+	/// Protects `data`
+	pub fn protect(&self, data: &[u8], config: &[u8], auth: Option<&[u8]>)
+		-> Result<Vec<u8>, KyncError>
 	{
-		// Validate the buffer
-		assert!(buf.len() >= self.seal_buf_len(key.len()));
+		// Create the C structs
+		let mut sink = Writer::new();
+		let data = Slice::from(data);
+		let config = Slice::from(config);
+		let auth = auth.map(|s| Slice::from(s));
 		
-		// Map crypto item ID and user secret
-		let (crypto_item_id, crypto_item_id_len) = match crypto_item_id {
-			Some(id) => (id.as_ptr(), id.len()),
-			None => (ptr::null(), 0)
-		};
-		let (user_secret, user_secret_len) = match user_secret {
-			Some(secret) => (secret.as_ptr(), secret.len()),
-			None => (ptr::null(), 0)
-		};
-		
-		// Seal the key
-		let mut buf_written = 0;
-		unsafe{ (self.seal)(
-			buf.as_mut_ptr(), &mut buf_written,
-			key.as_ptr(), key.len(),
-			crypto_item_id, crypto_item_id_len,
-			user_secret, user_secret_len
-		) }.check()?;
-		
-		Ok(buf_written)
+		// Call `protect`
+		let auth = auth.as_ref().map(|s| s.slice_t() as *const sys::slice_t)
+			.unwrap_or(ptr::null());
+		unsafe{ self.protect.unwrap()(sink.write_t(), data.slice_t(), config.slice_t(), auth) }
+			.check(KyncErrorKind::ProtectError)?;
+		Ok(sink.into())
 	}
 	
-	/// The buffer size necessary for a call to `open`
-	pub fn open_buf_len(&self, input_len: usize) -> usize {
-		self.buf_len(b"open", input_len)
-	}
-	/// Opens the `capsule` into `buf` and returns the amount of bytes written
-	pub fn open(&self, buf: &mut[u8], capsule: &[u8], user_secret: Option<&[u8]>)
-		-> Result<usize, KyncError>
-	{
-		// Validate the buffer
-		assert!(buf.len() >= self.open_buf_len(capsule.len()));
+	/// Recovers some protected `data`
+	pub fn recover(&self, data: &[u8], auth: Option<&[u8]>) -> Result<Vec<u8>, KyncError> {
+		// Create the C structs
+		let mut sink = Writer::new();
+		let data = Slice::from(data);
+		let auth = auth.map(|s| Slice::from(s));
 		
-		// Map user secret
-		let (user_secret, user_secret_len) = match user_secret {
-			Some(secret) => (secret.as_ptr(), secret.len()),
-			None => (ptr::null(), 0)
-		};
-		
-		// Call function
-		let mut buf_written = 0;
-		unsafe{ (self.open)(
-			buf.as_mut_ptr(), &mut buf_written,
-			capsule.as_ptr(), capsule.len(),
-			user_secret, user_secret_len
-		) }.check()?;
-		
-		Ok(buf_written)
+		// Call `recover`
+		let auth = auth.as_ref().map(|s| s.slice_t() as *const sys::slice_t)
+			.unwrap_or(ptr::null());
+		unsafe{ self.recover.unwrap()(sink.write_t(), data.slice_t(), auth) }
+			.check(KyncErrorKind::ProtectError)?;
+		Ok(sink.into())
 	}
 }
