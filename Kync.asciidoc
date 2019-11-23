@@ -3,8 +3,8 @@
 
 
 == General
-Kync describes a **K**e**Y**e**NC**apsulation plugin API – a KyNc plugin protects a secret for your
-app.
+Kync describes a **K**e**Y**e**NC**apsulation plugin API – a KyNc plugin performs the task of
+protecting your app's secret.
 
 The advantage of separating the app and the key storage is that the secret can be stored in a
 context specific and user defined way by simply loading another plugin – how the secret is protected
@@ -202,8 +202,8 @@ struct write_t {
 ----
 
 A write callback to write some data to an opaque handle. The write function may be called multiple
-times – either to split the data into different logical segments (e.g. <<_configs>>) or just because
-the data is not available at once (e.g. <<_protect>> and <<_recover>>).
+times – either to split the data into different logical segments (e.g. <<configs>>) or just because
+the data is not available at once (e.g. <<protect>> and <<recover>>).
 
 Fields:
 
