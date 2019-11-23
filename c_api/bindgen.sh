@@ -1,6 +1,6 @@
 #!/bin/sh
 
-bindgen --use-core \
+bindgen --use-core --no-layout-tests  \
   --whitelist-type slice_t --no-copy slice_t \
   --whitelist-type write_t --no-copy write_t \
   --whitelist-type init \

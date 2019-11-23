@@ -9,39 +9,6 @@ pub struct slice_t {
 	#[doc = " The data length"]
 	pub len: usize,
 }
-#[test]
-fn bindgen_test_layout_slice_t() {
-	assert_eq!(
-		::core::mem::size_of::<slice_t>(),
-		16usize,
-		concat!("Size of: ", stringify!(slice_t))
-	);
-	assert_eq!(
-		::core::mem::align_of::<slice_t>(),
-		8usize,
-		concat!("Alignment of ", stringify!(slice_t))
-	);
-	assert_eq!(
-		unsafe { &(*(::core::ptr::null::<slice_t>())).ptr as *const _ as usize },
-		0usize,
-		concat!(
-		"Offset of field: ",
-		stringify!(slice_t),
-		"::",
-		stringify!(ptr)
-		)
-	);
-	assert_eq!(
-		unsafe { &(*(::core::ptr::null::<slice_t>())).len as *const _ as usize },
-		8usize,
-		concat!(
-		"Offset of field: ",
-		stringify!(slice_t),
-		"::",
-		stringify!(len)
-		)
-	);
-}
 #[doc = " A write callback"]
 #[repr(C)]
 #[derive(Debug)]
@@ -56,39 +23,6 @@ pub struct write_t {
 			data: *const slice_t,
 		) -> *const ::std::os::raw::c_char,
 	>,
-}
-#[test]
-fn bindgen_test_layout_write_t() {
-	assert_eq!(
-		::core::mem::size_of::<write_t>(),
-		16usize,
-		concat!("Size of: ", stringify!(write_t))
-	);
-	assert_eq!(
-		::core::mem::align_of::<write_t>(),
-		8usize,
-		concat!("Alignment of ", stringify!(write_t))
-	);
-	assert_eq!(
-		unsafe { &(*(::core::ptr::null::<write_t>())).handle as *const _ as usize },
-		0usize,
-		concat!(
-		"Offset of field: ",
-		stringify!(write_t),
-		"::",
-		stringify!(handle)
-		)
-	);
-	assert_eq!(
-		unsafe { &(*(::core::ptr::null::<write_t>())).write as *const _ as usize },
-		8usize,
-		concat!(
-		"Offset of field: ",
-		stringify!(write_t),
-		"::",
-		stringify!(write)
-		)
-	);
 }
 #[doc = " Initializes the library with a specific API version and a logging level"]
 #[doc = ""]

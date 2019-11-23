@@ -24,7 +24,7 @@ libloading = "^0.5"
 
 
 [dev-dependencies]
-kync_test_plugin = { version = "0.2.0", path = "./kync_test_plugin" }
+kync_test_plugin = { version = "0.2.1", path = "./kync_test_plugin" }
 
 
 [profile.dev]
